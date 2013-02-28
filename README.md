@@ -1,0 +1,4 @@
+ormchair
+========
+
+Python CouchDB ORM
