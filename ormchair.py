@@ -8,9 +8,22 @@ import uuid
 import json
 
 """
+Stores a mapping of document classes against name
+"""
+type_class_map = {}
+
+
+"""
 Used for schema validation errors
 """
 class ValidationError(Exception):
+	def __init__(self, message):
+		Exception.__init__(self, message)
+
+"""
+Used for document conflict errors
+"""
+class ConflictError(Exception):
 	def __init__(self, message):
 		Exception.__init__(self, message)
 
@@ -50,6 +63,11 @@ class Property(object):
 	def setName(self,name):
 		
 		self._name = name
+	
+	# Get the name of the property
+	def getName(self):
+		
+		return self._name
 		
 	# Override	
 	def _validate(self,value):
@@ -72,7 +90,7 @@ class Property(object):
 """ 
 Metaclass to set the name on the descriptor property objects
 """
-class PropertyDescriptorResolverMetaClass(type):
+class SchemaMetaClass(type):
 	
 	def __new__(cls, classname, bases, classDict):
 		
@@ -101,13 +119,16 @@ Mapped to a class
 class Schema(object):
 	
 	# Set the name on all the descriptors within this class
-	__metaclass__ = PropertyDescriptorResolverMetaClass
+	__metaclass__ = SchemaMetaClass
 	
 	def __init__(self,*args,**kwargs):
 		
 		# Defaults
 		self._type = "object"
 		self._required = []
+		
+		# Is this a root schema or subschema
+		self._is_root = kwargs.pop('is_root', True)
 		
 		# Used to store actual values of properties (can't store in descriptor objects as they are static)
 		self._propertyValues = {}
@@ -290,7 +311,7 @@ class DictProperty(Property):
 		if self._name not in instance._propertyValues:
 				
 			# Create instance of schema subclass
-			instance._propertyValues[self._name] = self._cls()
+			instance._propertyValues[self._name] = self._cls(is_root=False)
 	
 	def toDict(self,instance):
 		
@@ -349,7 +370,7 @@ class DictPropertyList(list):
 	def _validate(self, value):
 		
 		# Create a new instance of Schema subclass
-		list_instance = self._cls()
+		list_instance = self._cls(is_root=False)
 		
 		# Populate from dict (and thus validate)
 		list_instance.fromDict(value)
@@ -418,6 +439,54 @@ class ListProperty(Property):
 			list_data.append(item.toDict())
 				
 		return list_data
+
+
+"""
+Property to link to other schemas
+"""
+class LinkProperty(Property):
+	
+	def __init__(self,linked_class,*args,**kwargs):
+		
+		self._linked_class = linked_class
+		self._type = kwargs.pop('type', "one_to_one")
+		self._reverse = kwargs.pop('reverse', None)
+		
+		super(LinkProperty,self).__init__(*args,**kwargs)
+		
+		# Add a reverse relation
+		if self._reverse and not hasattr(self._linked_class,self._reverse):
+			
+			# Add reverse type
+			if self._type in ["one_to_one","one_to_many"]:
+				reverse_type = "one_to_one"
+			else:
+				reverse_type = "many_to_many"
+			
+			setattr(self._linked_class,self._reverse,LinkProperty(self.__class__,type=reverse_type,reverse=self._name))
+		
+	def __get__(self, instance, owner):
+		
+		if instance:
+			return (instance,self)
+		else:
+			return self
+			
+	def __set__(self, instance, value):
+		pass
+	
+	def toDict(self,instance):
+		
+		return None
+	
+	def getLinkedClass(self):
+		
+		return self._linked_class
+	
+	def getReverse(self):
+		
+		return self._reverse
+
 	
 """
 A couchdb server
@@ -426,9 +495,6 @@ class Server(object):
 	
 	def __init__(self,url):
 		self._url = url
-		
-		# Register all the classes as documents
-		Document.registerClasses()
 		
 	def createDatabase(self,database_name):
 		
@@ -492,6 +558,17 @@ class Database(object):
 		
 		return document
 	
+	# Updates a document
+	def update(self,document):
+		
+		r = requests.put("%s/%s" % (self._database_url,document._id),data=document.toJson())
+		if r.status_code == 201:
+			document._rev = r.json()["rev"]
+		else:
+			raise Exception(r.json())
+		
+		return document
+	
 	# Get single document
 	def get(self,_id,rev=None):
 		
@@ -505,8 +582,8 @@ class Database(object):
 			document_data = r.json()
 			
 			# Get the correct class (if not fall back to document) 
-			if document_data["type_"] in Document.typeClassMap:
-				document_class = Document.typeClassMap[document_data["type_"]]
+			if document_data["type_"] in type_class_map:
+				document_class = type_class_map[document_data["type_"]]
 			else:
 				document_class = Document
 			
@@ -515,30 +592,143 @@ class Database(object):
 		else:
 			raise Exception(r.json())
 	
-	# Updates a document
-	def update(self,document):
+	
+	# Bulk doc API used for add/update/delete multiple	
+	def _bulkDocs(self,documents):
 		
-		r = requests.put("%s/%s" % (self._database_url,document._id),data=document.toJson())
+		documents_json = ",".join([document.toJson() for document in documents])
+		
+		headers = {"content-type": "application/json"}	
+		data = ('{"docs": [%s]}') % documents_json
+		
+		r = requests.post("%s/_bulk_docs" % (self._database_url),headers=headers,data=data)
+		
 		if r.status_code == 201:
-			document._rev = r.json()["rev"]
+			documents_data = r.json()
+			
+			# Return saved and failed documents
+			ok_documents = []
+			failed_documents = []
+			
+			# Create a hash map of id vs new rev (only succeeded updates/inserts will have a rev)
+			id_rev_map = dict([(document_data["id"],document_data["rev"]) for document_data in documents_data if "rev" in document_data])
+			
+			# Update existing objects
+			for document in documents:
+				
+				# See if succeeded
+				if document._id in id_rev_map:
+					
+					document._rev = id_rev_map[document._id]
+					ok_documents.append(document)
+				
+				# Failed due to conflict
+				else:
+					failed_documents.append(document)
+					
+			return (ok_documents,failed_documents)
+			
 		else:
 			raise Exception(r.json())
+	
+	# Add multiple documents
+	def addMultiple(self,documents):
+		return self._bulkDocs(documents)
+	
+	# Update multiple documents
+	def updateMultiple(self,documents):
+		return self._bulkDocs(documents)
+	
+	# Delete multiple documents
+	def deleteMultiple(self,documents):
 		
-		return document
+		# Mark all docs for delete
+		for document in documents:
+			document.setMarkedForDelete(True)
+			
+		return self._bulkDocs(documents)
+	
+	# Get multiple documents
+	def getMultiple(self,_ids):
+		
+		headers = {"content-type": "application/json"}	
+		data = json.dumps({"keys":_ids})
+		
+		r = requests.post("%s/_all_docs?include_docs=true" % (self._database_url), headers=headers,data=data)
+		
+		if r.status_code == 200:
+			documents = []
+			documents_data = r.json()
+			
+			for row in documents_data["rows"]:
+				
+				# Get the correct class (if not fall back to document) 
+				if row["doc"]["type_"] in type_class_map:
+					document_class = type_class_map[row["doc"]["type_"]]
+				else:
+					document_class = Document
+			
+				documents.append(document_class(document_data=row["doc"]))
+			
+			return documents
+		
+		else:
+			raise Exception(r.json())
+	
 	
 	# Add link
-	def addLink(self,link_property,documents_to_link):
+	def addLink(self,link_property_tuple,to_document):
 		
-		pass
+		# Get the from doc and property itself
+		(from_document,link_property) = link_property_tuple
+		
+		documents_to_add = []
+		for document in [from_document,to_document]:
+			if document.hasBeenAdded():
+				documents_to_add.append(document)
+		
+		# Now create link documents
+		to_link_document = LinkDocument()
+		to_link_document.name = link_property.getName()
+		to_link_document.from_id = from_document._id
+		to_link_document.from_type = from_document.type_
+		to_link_document.to_id = to_document._id
+		to_link_document.to_type = to_document.type_
+		
+		from_link_document = LinkDocument()
+		from_link_document.name = link_property.getReverse()
+		from_link_document.from_id = to_document._id
+		from_link_document.from_type = to_document.type_
+		from_link_document.to_id = from_document._id
+		from_link_document.to_type = from_document.type_
+		
+		# Add documents to database
+		documents_to_add.extend([to_link_document,from_link_document])
+		return self.addMultiple(documents_to_add)
+		
+		
 
+""" 
+Metaclass to register the document class with a type
+"""
+class DocumentMetaClass(SchemaMetaClass):
 	
+	def __new__(cls, classname, bases, classDict):
+		
+		type_class = SchemaMetaClass.__new__(cls, classname, bases, classDict)
+		
+		# Store in map
+		type_class_map[classname.lower()] = type_class
+		
+		return type_class
+
+
 """
 The main class to extend. Represents a couchdb schema bound document
 """
 class Document(Schema):
 	
-	# Static to store type again against class
-	typeClassMap = {}
+	__metaclass__ = DocumentMetaClass
 	
 	# The properties
 	_id = StringProperty()
@@ -552,21 +742,23 @@ class Document(Schema):
 		# See if data passed in
 		if document_data == None:
 			self._id = uuid.uuid1().hex
-			self.type_ = self.__class__.__name__.lower()
+			self.type_ = self.type_ if self.type_ else self.__class__.__name__.lower()
 		else:
 			self.fromDict(document_data)
+			
+		# Store special flag for deletion
+		self._marked_for_delete = False
 	
-	# Registers all classes that extend Document			
-	@staticmethod
-	def registerClasses():
-		for subclass in all_subclasses(Document):
-			Document.typeClassMap[subclass.__name__.lower()] = subclass
 	
 	# Get the document as JSON
 	def toJson(self):
 		
 		# Empty dict
 		document_data = {}
+		
+		# See if marked for delete
+		if self._marked_for_delete:
+			document_data["_deleted"] = True
 		
 		# Loop over properties
 		for property_name in self._properties:
@@ -575,18 +767,24 @@ class Document(Schema):
 				document_data[property_name] = getattr(self.__class__,property_name).toDict(self)		
 		
 		return json.dumps(document_data)
+	
+	# Has the document been added to the database yet?
+	def hasBeenAdded(self):
+		
+		return not (self._rev == None)
+	
+	# Mark this document for delete
+	def setMarkedForDelete(self,marked_for_delete=True):
+		
+		self._marked_for_delete = marked_for_delete
 
-
-# Helper to get all subclasses
-def all_subclasses(cls):
-	return cls.__subclasses__() + [g for s in cls.__subclasses__() for g in all_subclasses(s)]
 
 """
 Used to store relationship between documents
 """
-class RelationDocument(Document):
+class LinkDocument(Document):
 	
-	type_ = StringProperty(default="_relation")
+	type_ = StringProperty(default="_link")
 	name = StringProperty()
 	from_type = StringProperty()
 	to_type = StringProperty()
@@ -594,33 +792,10 @@ class RelationDocument(Document):
 	to_id = StringProperty()
 	
 	def __init__(self,*args,**kwargs):
-		Document.__init__(self,*args,**kwargs)
+		super(LinkDocument,self).__init__(*args,**kwargs)
 
-"""
-Relation to link documents
-"""
-"""
-class LinkProperty(ObjectProperty):
-	
-	def __init__(self,linked_class,*args,**kwargs):
-		
-		self._linked_class = linked_class
-		self._reverse = kwargs.pop('reverse', None)
-		
-		ObjectProperty.__init__(self,*args,**kwargs)
-		
-		# Add a reverse relation
-		if self._reverse and not hasattr(self._linked_class,self._reverse):
-			
-			setattr(self._linked_class,self._reverse,LinkProperty(self.__class__,reverse=self._name))
-		
-		
-	def __get__(self, instance, owner):
-		return self
-			
-	def __set__(self, instance, value):
-		pass
-"""
+
+
 		
 		
 # User created classes
@@ -653,7 +828,7 @@ class Person(Document):
 		address_2 = StringProperty(default="wessex")
 	)
 	
-	#related_pets = LinkProperty(Pet,reverse="owner")
+	related_pets = LinkProperty(Pet,type="one_to_many",reverse="owner")
 	
 	def __init__(self,*args,**kwargs):
 		Document.__init__(self,*args,**kwargs)
@@ -689,12 +864,29 @@ if __name__ == "__main__":
 	print person.toJson()
 	print person1.toJson()
 	
-	person = db.add(person)
-	person1 = db.add(person1)
+	db.add(person)
+	db.add(person1)
 	
-	#pet = Pet()
-	#db.addLink(person.related_pets, pet)
+	person1.name = "Jon"
+	old_rev = person1._rev
+	db.update(person1)
+	person1._rev = old_rev
+	person.name = "WILLIAM"
+	person1.name = "KALENA"
 	
+	(ok_docs,failed_docs) = db.updateMultiple([person,person1])
+	print "update - ok",ok_docs
+	print "update - failed",failed_docs
+	
+	pet = Pet()
+	pet1 = Pet()
+	db.addMultiple([pet,pet1])
+	
+	db.addLink(person.related_pets, pet)
+	
+	updated_pets = db.getMultiple([pet._id,pet1._id])
+	for upet in updated_pets:
+		print upet
 	
 	#print person.name
 	#print person1.name
@@ -703,4 +895,3 @@ if __name__ == "__main__":
 	
 	print person_fetched.toJson()
 	print person1_fetched.toJson()
-	
