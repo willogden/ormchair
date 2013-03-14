@@ -57,7 +57,6 @@ class Property(object):
 			
 			if self._validate(value):
 				instance._propertyValues[self._name] = value
-				instance.setUpdated()
 	
 	# Set the name of the property
 	def setName(self,name):
@@ -68,16 +67,32 @@ class Property(object):
 	def getName(self):
 		
 		return self._name
+	
+	# Get whether this is required
+	def getRequired(self):
+		
+		return self._required
 		
 	# Override	
 	def _validate(self,value):
 		
 		return True
 	
-	# Ovveride
-	def toDict(self,instance):
+	# Override
+	def instanceToDict(self,instance):
 		
 		return self.__get__(instance, None)
+	
+	# Override
+	def schemaToDict(self):
+		
+		schema_dict = {}
+		
+		if self._required:
+			schema_dict["required"] = True
+		
+		return schema_dict
+		
 	
 	# Return the default value
 	def getDefaultValue(self):
@@ -121,21 +136,14 @@ class Schema(object):
 	# Set the name on all the descriptors within this class
 	__metaclass__ = SchemaMetaClass
 	
+	# Is this a root schema or subschema
+	_is_root = True
+	
 	def __init__(self,*args,**kwargs):
-		
-		# Defaults
-		self._type = "object"
-		self._required = []
-		
-		# Is this a root schema or subschema
-		self._is_root = kwargs.pop('is_root', True)
 		
 		# Used to store actual values of properties (can't store in descriptor objects as they are static)
 		self._propertyValues = {}
-		
-		# Stores whether this object has had properties changed
-		self._updated = False
-		
+
 		# Set parent and defaults on properties
 		for property_name in self._properties:
 			
@@ -144,7 +152,8 @@ class Schema(object):
 			setattr(self,property_name,default_value)
 	
 	# Set the values of the schema from a dict	
-	def fromDict(self,dict_data):
+	def instanceFromDict(self,dict_data):
+		
 		if isinstance(dict_data,dict):
 			for key in dict_data:
 				if key in self._properties:
@@ -152,20 +161,52 @@ class Schema(object):
 				else:
 					raise ValidationError("No property %s exists" % key)
 	
-	# Export the schema as a basic dict
-	def toDict(self):
+	# Export the schemas values as a basic dict
+	def instanceToDict(self):
 		
 		dict_data = {}
 		
 		# Loop over properties
 		for property_name in self._properties:
 			
-			dict_data[property_name] = getattr(self.__class__,property_name).toDict(self)
+			dict_data[property_name] = getattr(self.__class__,property_name).instanceToDict(self)
 		
-		return dict_data	
+		return dict_data
 	
-	def setUpdated(self):
-		self._updated = True
+	# Export the class schema as a dict
+	@classmethod
+	def schemaToDict(cls):
+		
+		schema_dict = {
+			"type" : "object",
+			"properties" : {},		
+		}
+		
+		# If this is a root schema add extras
+		if cls._is_root:
+			
+			schema_dict["$schema"] = "http://json-schema.org/draft-03/schema#"
+			schema_dict["id"] = cls.__name__.lower()
+			
+		# Loop over properties
+		
+		links = []
+		for property_name in cls._properties:
+			
+			# Get the property
+			cls_property = getattr(cls,property_name)
+			
+			# Treat linkproperties differently
+			if isinstance(cls_property,LinkProperty):
+				links.append(cls_property.schemaToDict())
+			else:
+				schema_dict["properties"][property_name] = cls_property.schemaToDict()
+			
+		# Only add links if there are any
+		if len(links) > 0:
+			schema_dict["links"] = links
+		
+		return schema_dict
 	
 
 """
@@ -200,6 +241,24 @@ class StringProperty(Property):
 			raise ValidationError("String is greater than maximum length")
 		
 		return True
+	
+	# Override
+	def schemaToDict(self):
+		
+		schema_dict = super(StringProperty,self).schemaToDict()
+		
+		schema_dict["type"] = "string"
+
+		if self._default:
+			schema_dict["default"] = str(self._default)
+		
+		if self._minLength:
+			schema_dict["minLength"] = self._minLength
+		
+		if self._maxLength:
+			schema_dict["maxLength"] = self._maxLength
+			
+		return schema_dict
 
 """
 A number property of a class
@@ -233,7 +292,22 @@ class NumberProperty(Property):
 			raise ValidationError("Number is greater than maximum")
 			
 		return True
+	
+	# Override
+	def schemaToDict(self):
 		
+		schema_dict["type"] = "number"
+		
+		if self._default:
+			schema_dict["default"] = self._default
+		
+		if self._minimum:
+			schema_dict["minimum"] = self._minimum
+		
+		if self._maximum:
+			schema_dict["maximum"] = self._maximum
+			
+		return schema_dict
 			
 
 """
@@ -251,6 +325,14 @@ class IntegerProperty(NumberProperty):
 			raise ValidationError("Not a number")
 		
 		return True
+	
+	# Override
+	def schemaToDict(self):
+		
+		schema_dict = super(IntegerProperty,self).schemaToDict()
+		schema_dict["type"] = "integer"
+		
+		return schema_dict
 	
 
 """
@@ -273,6 +355,13 @@ class BooleanProperty(Property):
 			raise ValidationError("Not a boolean")
 		
 		return True
+	
+	# Override
+	def schemaToDict(self):
+		
+		schema_dict = {"type":"boolean"}
+		
+		return schema_dict
 
 
 """
@@ -285,6 +374,7 @@ class DictProperty(Property):
 		super(DictProperty, self).__init__(self,*args,**kwargs)
 		
 		# Create a new subclass of Schema
+		kwargs["_is_root"] = False
 		self._cls = type('SchemaSubClass', (Schema,), kwargs)
 		
 	def __get__(self, instance, owner):
@@ -303,7 +393,7 @@ class DictProperty(Property):
 		
 		self._checkForPropertyValue(instance)
 		
-		instance._propertyValues[self._name].fromDict(value)
+		instance._propertyValues[self._name].instanceFromDict(value)
 	
 	# Make sure property value has been set	
 	def _checkForPropertyValue(self,instance):
@@ -311,9 +401,9 @@ class DictProperty(Property):
 		if self._name not in instance._propertyValues:
 				
 			# Create instance of schema subclass
-			instance._propertyValues[self._name] = self._cls(is_root=False)
+			instance._propertyValues[self._name] = self._cls()
 	
-	def toDict(self,instance):
+	def instanceToDict(self,instance):
 		
 		property_data = {}
 		
@@ -322,18 +412,23 @@ class DictProperty(Property):
 		
 		# Loop the properties
 		for property_name in dict_property_instance._properties:	
-			# Recurse on toDict
-			property_data[property_name] = getattr(dict_property_instance.__class__,property_name).toDict(dict_property_instance)
+			# Recurse on instanceToDict
+			property_data[property_name] = getattr(dict_property_instance.__class__,property_name).instanceToDict(dict_property_instance)
 		
 		return property_data
 	
-	def fromDict(self,instance,dict_data):
+	def valueFromDict(self,instance,dict_data):
 		
 		# Loop the properties
 		for property_name in instance._properties:	
 			
 			# Set the instance value
 			setattr(instance,property_name,dict_data[property_name])
+	
+	def schemaToDict(self):
+		
+		return self._cls.schemaToDict()
+	
 
 # Thanks to http://stackoverflow.com/questions/12201811/subclass-python-list-to-validate-new-items
 class DictPropertyList(list):
@@ -373,7 +468,7 @@ class DictPropertyList(list):
 		list_instance = self._cls(is_root=False)
 		
 		# Populate from dict (and thus validate)
-		list_instance.fromDict(value)
+		list_instance.instanceFromDict(value)
 		
 		return list_instance
 	
@@ -396,6 +491,7 @@ class ListProperty(Property):
 		self._options = kwargs.pop('_options', None)
 		
 		# Create a new subclass of Schema based on passed in items dict
+		kwargs["_is_root"] = False
 		self._cls = type('SchemaSubClass', (Schema,), kwargs)
 		
 		super(ListProperty, self).__init__(self,*args,**kwargs)
@@ -428,7 +524,7 @@ class ListProperty(Property):
 		
 
 	# Get the object as JSON
-	def toDict(self,instance):
+	def instanceToDict(self,instance):
 		
 		# Empty array
 		list_data = []
@@ -436,9 +532,15 @@ class ListProperty(Property):
 		# Loop over dictpropertlist
 		for item in self.__get__(instance,None):
 		
-			list_data.append(item.toDict())
+			list_data.append(item.instanceToDict())
 				
 		return list_data
+	
+	def schemaToDict(self):
+		
+		return {
+			"items" : self._cls.schemaToDict()
+		}
 
 
 """
@@ -475,7 +577,7 @@ class LinkProperty(Property):
 	def __set__(self, instance, value):
 		pass
 	
-	def toDict(self,instance):
+	def instanceToDict(self,instance):
 		
 		return None
 	
@@ -486,6 +588,95 @@ class LinkProperty(Property):
 	def getReverse(self):
 		
 		return self._reverse
+	
+	# Override
+	def schemaToDict(self):
+		
+		return {
+			"href" : ("/%s") % (self.getName()),
+			"rel" : self.getName(),
+			"$targetSchema" : ("%s#") % self._linked_class.__name__.lower()
+		}
+
+"""
+Embedded link helper class
+"""
+class EmbeddedLink():
+	
+	_id = StringProperty()
+	
+	def __init__(self):
+		
+		self._id = None
+		self._document = None
+		self._inflated = False
+
+"""
+Allows for composite properties
+"""
+class EmbeddedLinkProperty(Property):
+	
+	def __init__(self,linked_class,**kwargs):
+		
+		self._linked_class = linked_class
+		
+		super(EmbeddedLinkProperty, self).__init__(self,**kwargs)
+	
+	def __get__(self, instance, owner):
+		
+		if instance is None:
+			# Return descriptor
+			return self
+		else:
+			self._checkForPropertyValue(instance)
+
+			# If _inflated is True return the doc
+			if instance._propertyValues[self._name]._inflated:
+				return instance._propertyValues[self._name]._document
+			else:
+				# Return id
+				return instance._propertyValues[self._name]._id
+	
+
+	def __set__(self, instance, value):
+		
+		self._checkForPropertyValue(instance)
+		
+		# If value is a an instance of linked class then this is the data to inflate this property else it's just an id
+		if isinstance(value,self._linked_class):
+			instance._propertyValues[self._name]._inflated = True
+			instance._propertyValues[self._name]._document = value
+			instance._propertyValues[self._name]._id = value._id
+		else:
+			instance._propertyValues[self._name]._id = value
+	
+	# Make sure property value has been set	
+	def _checkForPropertyValue(self,instance):
+		# Check to see if property exists on instance
+		if self._name not in instance._propertyValues:
+				
+			instance._propertyValues[self._name] = EmbeddedLink()
+			
+	def instanceToDict(self,instance):
+		
+		if instance:
+			return instance._propertyValues[self._name]._id
+		else:
+			return None
+	
+	# Override
+	def schemaToDict(self):
+		
+		schema_dict = super(EmbeddedLinkProperty,self).schemaToDict()
+		
+		schema_dict["type"] = [
+			{"$ref": ("%s#") % self._linked_class.__name__.lower()},
+			"string"
+		]
+		
+		return schema_dict
+		
+
 
 	
 """
@@ -676,36 +867,50 @@ class Database(object):
 			raise Exception(r.json())
 	
 	
-	# Add link
-	def addLink(self,link_property_tuple,to_document):
+	# Add links to documents
+	def addLinks(self,link_property_tuple,to_documents):
 		
 		# Get the from doc and property itself
 		(from_document,link_property) = link_property_tuple
 		
+		# Check to make sure documents have been added to the db
 		documents_to_add = []
-		for document in [from_document,to_document]:
-			if document.hasBeenAdded():
-				documents_to_add.append(document)
+		if not from_document.hasBeenAdded():
+			documents_to_add.append(from_document)
+			
+		# Create new link document per to document
+		for to_document in to_documents:
+			if not to_document.hasBeenAdded():
+				documents_to_add.append(to_document)
 		
-		# Now create link documents
-		to_link_document = LinkDocument()
-		to_link_document.name = link_property.getName()
-		to_link_document.from_id = from_document._id
-		to_link_document.from_type = from_document.type_
-		to_link_document.to_id = to_document._id
-		to_link_document.to_type = to_document.type_
+			# Now create link documents
+			to_link_document = LinkDocument()
+			to_link_document.name = link_property.getName()
+			to_link_document.from_id = from_document._id
+			to_link_document.from_type = from_document.type_
+			to_link_document.to_id = to_document._id
+			to_link_document.to_type = to_document.type_
+			
+			from_link_document = LinkDocument()
+			from_link_document.name = link_property.getReverse()
+			from_link_document.from_id = to_document._id
+			from_link_document.from_type = to_document.type_
+			from_link_document.to_id = from_document._id
+			from_link_document.to_type = from_document.type_
+			
+			# Add documents to database
+			documents_to_add.extend([to_link_document,from_link_document])
 		
-		from_link_document = LinkDocument()
-		from_link_document.name = link_property.getReverse()
-		from_link_document.from_id = to_document._id
-		from_link_document.from_type = to_document.type_
-		from_link_document.to_id = from_document._id
-		from_link_document.to_type = from_document.type_
-		
-		# Add documents to database
-		documents_to_add.extend([to_link_document,from_link_document])
 		return self.addMultiple(documents_to_add)
+	
+	# Add link to document
+	def addLink(self,link_property_tuple,to_document):
 		
+		return self.addLinks(link_property_tuple, [to_document])
+	
+	# Takes a list of document classes and creates their schema's and if changed updates schema version and design docs 
+	def syncClasses(self,document_classes):
+		pass	
 		
 
 """ 
@@ -731,9 +936,9 @@ class Document(Schema):
 	__metaclass__ = DocumentMetaClass
 	
 	# The properties
-	_id = StringProperty()
-	_rev = StringProperty()
-	type_ = StringProperty()
+	_id = StringProperty(required=True)
+	_rev = StringProperty(required=True)
+	type_ = StringProperty(required=True)
 	
 	def __init__(self,document_data=None):
 		
@@ -744,7 +949,7 @@ class Document(Schema):
 			self._id = uuid.uuid1().hex
 			self.type_ = self.type_ if self.type_ else self.__class__.__name__.lower()
 		else:
-			self.fromDict(document_data)
+			self.instanceFromDict(document_data)
 			
 		# Store special flag for deletion
 		self._marked_for_delete = False
@@ -764,7 +969,7 @@ class Document(Schema):
 		for property_name in self._properties:
 			if not (property_name == "_rev" and self._rev == None):
 				
-				document_data[property_name] = getattr(self.__class__,property_name).toDict(self)		
+				document_data[property_name] = getattr(self.__class__,property_name).instanceToDict(self)		
 		
 		return json.dumps(document_data)
 	
@@ -793,105 +998,3 @@ class LinkDocument(Document):
 	
 	def __init__(self,*args,**kwargs):
 		super(LinkDocument,self).__init__(*args,**kwargs)
-
-
-
-		
-		
-# User created classes
-
-class Pet(Document):
-	
-	name = StringProperty(default="dog")
-	
-	def __init__(self,*args,**kwargs):
-		Document.__init__(self,*args,**kwargs)
-
-
-class Person(Document):
-	
-	name = StringProperty(default="joe bloggs")
-	address = DictProperty(
-		address_1 = StringProperty(),
-		address_2 = StringProperty(default="wessex"),
-		postcode = DictProperty(
-			postcode_1 = StringProperty(),
-			postcode_2 = StringProperty(),
-			extra_postcodes = ListProperty(
-				extra_postcode = StringProperty()
-			)
-		)
-	)
-	
-	other_addresses = ListProperty(
-		address_1 = StringProperty(),
-		address_2 = StringProperty(default="wessex")
-	)
-	
-	related_pets = LinkProperty(Pet,type="one_to_many",reverse="owner")
-	
-	def __init__(self,*args,**kwargs):
-		Document.__init__(self,*args,**kwargs)
-		
-
-
-
-
-if __name__ == "__main__":
-
-	server = Server("http://127.0.0.1:5984")
-	
-	if not server.databaseExists("test"):
-		db = server.createDatabase("test")
-	else:
-		db = server.getDatabase("test")
-	
-	
-	person = Person()
-	person1 = Person()
-	
-
-	person.name = "will"
-	person.address.address_1 = "1 boltro road"
-	person.address.postcode.postcode_1 = "RH16"
-	person.other_addresses.append({"address_1":"my street","address_2":"UK"})
-
-	
-	person1.name = "kate"
-	person1.address.address_1 = "1 home road"
-	person1.address.postcode.postcode_1 = "HN3"
-	
-	print person.toJson()
-	print person1.toJson()
-	
-	db.add(person)
-	db.add(person1)
-	
-	person1.name = "Jon"
-	old_rev = person1._rev
-	db.update(person1)
-	person1._rev = old_rev
-	person.name = "WILLIAM"
-	person1.name = "KALENA"
-	
-	(ok_docs,failed_docs) = db.updateMultiple([person,person1])
-	print "update - ok",ok_docs
-	print "update - failed",failed_docs
-	
-	pet = Pet()
-	pet1 = Pet()
-	db.addMultiple([pet,pet1])
-	
-	db.addLink(person.related_pets, pet)
-	
-	updated_pets = db.getMultiple([pet._id,pet1._id])
-	for upet in updated_pets:
-		print upet
-	
-	#print person.name
-	#print person1.name
-	person_fetched = db.get(person._id)
-	person1_fetched = db.get(person1._id)
-	
-	print person_fetched.toJson()
-	print person1_fetched.toJson()
