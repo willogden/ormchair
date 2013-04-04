@@ -4,10 +4,19 @@ Created on 14 Mar 2013
 @author: will ogden
 '''
 import json
-from ormchair import Server,Document,StringProperty,DictProperty,ListProperty,LinkProperty,EmbeddedLinkProperty
+from ormchair import Server,Document,DesignDocument,View,Index,StringProperty,DictProperty,ListProperty,LinkProperty,EmbeddedLinkProperty,_id
 
 # User created classes
-
+@_id("_design/tester")
+class TestDesignDocument(DesignDocument):
+	
+	all2 = View("""
+		'map':
+			'function(doc) {
+				emit("test2",doc);
+			}'
+	""")
+	
 class Pet(Document):
 	
 	name = StringProperty(default="dog")
@@ -23,23 +32,30 @@ class Person(Document):
 			postcode_1 = StringProperty(),
 			postcode_2 = StringProperty(),
 			extra_postcodes = ListProperty(
-				extra_postcode = StringProperty()
+				StringProperty()
 			)
 		)
 	)
 	
 	other_addresses = ListProperty(
-		address_1 = StringProperty(),
-		address_2 = StringProperty(default="wessex")
+		DictProperty(
+			address_1 = StringProperty(),
+			address_2 = StringProperty(default="wessex")
+		)
 	)
 	
-	related_pets = LinkProperty(Pet,type="one_to_many",reverse="owner")
+	related_pets = LinkProperty(Pet,reverse="owner")
 	
 	best_pet = EmbeddedLinkProperty(Pet)
 	
 	owned_pets = ListProperty(
-		pet = EmbeddedLinkProperty(Pet)
+		EmbeddedLinkProperty(Pet)
 	)
+	
+	test_property = StringProperty()
+	
+	get_by_name = Index("name")
+	get_by_name_and_address = Index("name","address.address_1")
 		
 
 if __name__ == "__main__":
@@ -51,6 +67,8 @@ if __name__ == "__main__":
 	else:
 		db = server.getDatabase("test")
 	
+	db.syncSchemas()
+	
 	
 	person = Person()
 	person1 = Person()
@@ -59,15 +77,15 @@ if __name__ == "__main__":
 	person.name = "will"
 	person.address.address_1 = "1 work road"
 	person.address.postcode.postcode_1 = "RH16"
-	person.other_addresses.append({"address_1":"my street","address_2":"UK"})
-
+	person.other_addresses.extend([{"address_1":"my street","address_2":"UK"},{"address_1":"44 the toad","address_2":"USA"}])
+	print person.other_addresses[1]
 	
 	person1.name = "kate"
 	person1.address.address_1 = "1 home road"
 	person1.address.postcode.postcode_1 = "HN3"
 	
-	print person.toJson()
-	print person1.toJson()
+	print person.instanceToDict()
+	print person1.instanceToDict()
 	
 	db.add(person)
 	db.add(person1)
@@ -93,7 +111,7 @@ if __name__ == "__main__":
 		print upet
 		
 	person.best_pet = pet
-	person.owned_pets.append({"pet": pet1})
+	person.owned_pets.append(pet1)
 	print "person best pet inflated",person.best_pet
 	db.update(person)
 	
@@ -104,8 +122,14 @@ if __name__ == "__main__":
 	
 	print "person best pet not inflated",person_fetched.best_pet
 	
-	print person_fetched.toJson()
-	#print person1_fetched.toJson()
+	print person_fetched.instanceToDict()
+	#print person1_fetched.instanceToDict()
 	
 	print json.dumps(Person.schemaToDict())
-
+	
+	queried_persons = db.getByIndex(Person.get_by_name,["WILLIAM"])
+	for queried_person in queried_persons:
+		print queried_person.name
+	
+	#test2 = TestDesignDocument()
+	#db.add(test2)
