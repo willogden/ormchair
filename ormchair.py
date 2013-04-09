@@ -46,8 +46,8 @@ class Property(object):
 			return self
 		else:
 			# Has it been previously set?
-			if self._name in instance._propertyValues:
-				return instance._propertyValues[self._name]
+			if self._name in instance._property_values:
+				return instance._property_values[self._name]
 			else:
 				return None
 	
@@ -56,7 +56,7 @@ class Property(object):
 		if instance:
 			
 			if self._validate(value):
-				instance._propertyValues[self._name] = value
+				instance._property_values[self._name] = value
 	
 	
 	# Set the name of the property
@@ -144,11 +144,17 @@ class Schema(object):
 	# Is this a root schema or subschema
 	_is_root = True
 	
-	def __init__(self,*args,**kwargs):
+	def __init__(self,root_instance=None):
+		
+		# Store the root instance (if none then assumed is root instance)
+		self._root_instance = root_instance if root_instance else self
 		
 		# Used to store actual values of properties (can't store in descriptor objects as they are static)
-		self._propertyValues = {}
+		self._property_values = {}
 
+		# Used to store unknown property values e.g. ones that don't match the schema but are passed in
+		self._unknown_property_values = []
+		
 		# Set parent and defaults on properties
 		for property_name in self._properties:
 			
@@ -157,8 +163,13 @@ class Schema(object):
 			setattr(self,property_name,default_value)
 	
 	# Set the values of the schema from a dict	
-	def instanceFromDict(self,dict_data):
+	def instanceFromDict(self,dict_data,ignore_properties=None):
 		
+		# If this is a root level schema empty the unknown properties list
+		if self.__class__._is_root:
+			
+			del self.getUnknownPropertyValues()[:]
+			
 		if isinstance(dict_data,dict):
 			
 			# Loop known properties
@@ -167,8 +178,21 @@ class Schema(object):
 				if property_name in dict_data:
 					setattr(self,property_name,dict_data[property_name])
 				elif getattr(self.__class__,property_name).getRequired():
-					raise ValidationError("Property %s is required but not in the document" % property_name)
+					raise ValidationError("Property %s is required but not present" % property_name)
 			
+			# Convert to sets
+			data_set = set(dict_data.keys())
+			properties_set = set(self._properties)
+			
+			# Remove keys to ignore (they're probably handled elsewhere by a subclass)
+			data_set = data_set - set(ignore_properties) if ignore_properties else data_set
+			
+			# Get the unknowns
+			unknown_properties_set = data_set.difference(properties_set)
+			for unknown_property in unknown_properties_set:
+				self.getUnknownPropertyValues().append(unknown_property)
+			
+	
 	# Export the schemas values as a basic dict
 	def instanceToDict(self):
 		
@@ -181,6 +205,15 @@ class Schema(object):
 		
 		return dict_data
 	
+	# Returns the root level instance object e.g. for dict and list properties to know their parent
+	def getRootInstance(self):
+		
+		return self._root_instance
+	
+	def getUnknownPropertyValues(self):
+		
+		return self._unknown_property_values
+	
 	# Export the class schema as a dict
 	@classmethod
 	def schemaToDict(cls):
@@ -192,7 +225,6 @@ class Schema(object):
 		
 		# If this is a root schema add extras
 		if cls._is_root:
-			
 			schema_dict["$schema"] = "http://json-schema.org/draft-03/schema#"
 			schema_dict["id"] = cls.__name__.lower()
 			
@@ -395,23 +427,23 @@ class DictProperty(Property):
 		else:
 			self._checkForPropertyValue(instance)
 
-			# Return instanc of subclas
-			return instance._propertyValues[self._name]
+			# Return instance of subclass
+			return instance._property_values[self._name]
 	
 
 	def __set__(self, instance, value):
 		
 		self._checkForPropertyValue(instance)
 		
-		instance._propertyValues[self._name].instanceFromDict(value)
+		instance._property_values[self._name].instanceFromDict(value)
 	
 	# Make sure property value has been set	
 	def _checkForPropertyValue(self,instance):
 		# Check to see if property exists on instance
-		if self._name not in instance._propertyValues:
+		if self._name not in instance._property_values:
 				
 			# Create instance of schema subclass
-			instance._propertyValues[self._name] = self._cls()
+			instance._property_values[self._name] = self._cls(root_instance=instance.getRootInstance())
 	
 	def instanceToDict(self,instance):
 		
@@ -443,9 +475,10 @@ class DictProperty(Property):
 # Thanks to http://stackoverflow.com/questions/12201811/subclass-python-list-to-validate-new-items
 class DictPropertyList(list):
 	
-	def __init__(self, itr, cls): 
+	def __init__(self, itr, cls, root_instance): 
 		
 		self._cls = cls
+		self._root_instance = root_instance
 		
 		# If a list has been passed in then validate
 		if itr == None:
@@ -475,7 +508,7 @@ class DictPropertyList(list):
 	def _validate(self, value):
 		
 		# Create a new instance of Schema subclass
-		list_instance = self._cls()
+		list_instance = self._cls(root_instance=self._root_instance)
 		
 		# Wrap the value into a dict
 		instance_dict = {"_property": value}
@@ -523,13 +556,13 @@ class ListProperty(Property):
 		else:
 			
 			# If first time accessed set default
-			if self._name not in instance._propertyValues:
+			if self._name not in instance._property_values:
 				
 				# Create instance of schema subclass
 				self.__set__(instance,[])
 				
 			# Return instance of subclass
-			return instance._propertyValues[self._name]
+			return instance._property_values[self._name]
 	
 	# Set
 	def __set__(self, instance, value):
@@ -538,7 +571,7 @@ class ListProperty(Property):
 			value = []
 		
 		# Store a dictpropertylist on the instance
-		instance._propertyValues[self._name] = DictPropertyList(value,self._cls)
+		instance._property_values[self._name] = DictPropertyList(value,self._cls,instance.getRootInstance())
 		
 
 	# Get the object as JSON
@@ -643,11 +676,11 @@ class EmbeddedLinkProperty(Property):
 			self._checkForPropertyValue(instance)
 
 			# If _inflated is True return the doc
-			if instance._propertyValues[self._name]._inflated:
-				return instance._propertyValues[self._name]._document
+			if instance._property_values[self._name]._inflated:
+				return instance._property_values[self._name]._document
 			else:
 				# Return id
-				return instance._propertyValues[self._name]._id
+				return instance._property_values[self._name]._id
 	
 
 	def __set__(self, instance, value):
@@ -656,23 +689,23 @@ class EmbeddedLinkProperty(Property):
 		
 		# If value is a an instance of linked class then this is the data to inflate this property else it's just an id
 		if isinstance(value,self._linked_class):
-			instance._propertyValues[self._name]._inflated = True
-			instance._propertyValues[self._name]._document = value
-			instance._propertyValues[self._name]._id = value._id
+			instance._property_values[self._name]._inflated = True
+			instance._property_values[self._name]._document = value
+			instance._property_values[self._name]._id = value._id
 		else:
-			instance._propertyValues[self._name]._id = value
+			instance._property_values[self._name]._id = value
 	
 	# Make sure property value has been set	
 	def _checkForPropertyValue(self,instance):
 		# Check to see if property exists on instance
-		if self._name not in instance._propertyValues:
+		if self._name not in instance._property_values:
 				
-			instance._propertyValues[self._name] = EmbeddedLink()
+			instance._property_values[self._name] = EmbeddedLink()
 			
 	def instanceToDict(self,instance):
 		
 		if instance:
-			return instance._propertyValues[self._name]._id
+			return instance._property_values[self._name]._id
 		else:
 			return None
 	
@@ -777,7 +810,7 @@ class Database(object):
 		return document
 	
 	# Get single document
-	def get(self,_id,rev=None):
+	def get(self,_id,rev=None,as_json=False):
 		
 		params = {}
 		if rev:
@@ -788,6 +821,10 @@ class Database(object):
 		if r.status_code == 200:
 			document_data = r.json()
 			
+			# See if just need to return json
+			if as_json:
+				return document_data
+			
 			# Get the correct class (if not fall back to document) 
 			if document_data["type_"] in type_class_map:
 				
@@ -796,7 +833,7 @@ class Database(object):
 				document_class = Document
 			
 			return document_class(document_data=document_data)
-		
+			
 		else:
 			raise Exception(r.json())
 	
@@ -926,7 +963,7 @@ class Database(object):
 		return self.addLinks(link_property_tuple, [to_document])
 	
 	# Loops over document classes and creates their schema's and if changed updates schema version and design docs for indexes
-	def syncSchemas(self):
+	def sync(self):
 		
 		# Loop each document class
 		for document_class_name in type_class_map:
@@ -960,44 +997,34 @@ class Database(object):
 				
 				# Set the schema rev for document class
 				type_class_map[document_class.__name__.lower()]["schema_rev"] = saved_schema_design_document._rev
-				
-				"""
-				# See if schema design document exists
-				schema_design_document_id = "_design/schema_%s" % (document_class.__name__.lower())
-				schema_design_document = None
-				
-				# Try and get document
-				try:
 			
-					schema_design_document = self.get(schema_design_document_id)
+			# Check design documents and see if they have fixed id's...if so check for changes and sync if needed
+			elif issubclass(document_class, DesignDocument) and document_class.hasFixedId():
+				
+				current_design_document = document_class()
+				
+				try:
 					
-				# Add
+					saved_design_document = self.get(current_design_document._id)
+					current_design_document._rev = saved_design_document._rev
+	
+					# Compare with saved (also check for unknown properties e.g. things in the doc that aren't in the schema)
+					if json.dumps(current_design_document.instanceToDict()) != json.dumps(saved_design_document.instanceToDict()) or len(saved_design_document.getUnknownPropertyValues()) > 0:
+						
+						saved_design_document = self.update(current_design_document)
+				
+				except ValidationError:
+					
+					# Ok doc exists but couldn't create class so just grab document (TODO this is inefficient but only happens when syncing meh)
+					saved_design_document_json = self.get(current_design_document._id,as_json=True)
+					current_design_document._rev = saved_design_document_json["_rev"]
+					saved_design_document = self.update(current_design_document)
+					
 				except Exception:
 					
-					schema_design_document = _SchemaDesignDocument(_id=schema_design_document_id)
-					schema_design_document = self.add(schema_design_document)
-					
+					# Doc doesn't exist so first sync so just add
+					saved_design_document = self.add(current_design_document)
 				
-				# Now see if indexes have changed
-				update = False
-				js_views_indexes_map = document_class.getJSViewsIndexesMap()
-				if schema_design_document.indexes_["map"] != js_views_indexes_map:
-					update = True
-					schema_design_document.indexes_["map"] = js_views_indexes_map
-				
-				schema = json.dumps(document_class.schemaToDict())
-				if schema_design_document.schema_ != schema:
-					update = True
-					schema_design_document.schema_ = schema
-					schema_design_document.links_["map"] = document_class.getJSViewsLinksMap()
-	
-				# See if need to update schema document
-				if update:
-					schema_design_document = self.update(schema_design_document)
-				
-				# Set the schema rev for document class
-				type_class_map[document_class.__name__.lower()]["schema_rev"] = schema_design_document._rev
-				"""
 	
 	# Gets the documents by index
 	def getByIndex(self,index_property,key,start_key=None,limit=None):
@@ -1172,12 +1199,13 @@ class Document(Schema):
 	def setMarkedForDelete(self,marked_for_delete=True):
 		
 		self._marked_for_delete = marked_for_delete
-	
+		
 	@classmethod
 	def getSchemaDesignDocumentId(cls):
 		
 		return "_design/schema_%s" % (cls.__name__.lower())
 	
+	# Schema design doc contains index and link views
 	@classmethod
 	def getSchemaDesignDocument(cls):
 		
@@ -1385,7 +1413,7 @@ class DesignDocument(Document):
 	# Set the values of the schema from a dict	
 	def instanceFromDict(self,dict_data):
 		
-		super(DesignDocument,self).instanceFromDict(dict_data)
+		super(DesignDocument,self).instanceFromDict(dict_data,ignore_properties=["views"])
 		
 		if isinstance(dict_data,dict):
 			
@@ -1395,6 +1423,31 @@ class DesignDocument(Document):
 				if "views" in dict_data and view_name in dict_data["views"]:
 					
 					setattr(self,view_name,dict_data["views"][view_name])
+				
+				elif "views" in dict_data and view_name not in dict_data["views"]: 
+					
+					raise ValidationError("View %s is required but not present" % view_name)
+						
+			# Convert to sets
+			data_set = set(dict_data["views"].keys()) if "views" in dict_data else set()
+			views_set = set(self.__class__._views)
+			
+			# Get the unknowns
+			unknown_views_set = data_set.difference(views_set)
+			
+			unknown_views = []
+			for unknown_view in unknown_views_set:
+				unknown_views.append(unknown_view)
+			
+			# Store under the single views property
+			if len(unknown_views) > 0:	
+				self.getUnknownPropertyValues().append({"views": unknown_views})				
+	
+	# Has the design doc been set an id as part of the class definition (most will have)
+	@classmethod
+	def hasFixedId(cls):
+		
+		return hasattr(cls,"_fixed_id") and cls._fixed_id != None
 					
 	
 	
