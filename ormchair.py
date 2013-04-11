@@ -952,37 +952,32 @@ class Database(object):
 				documents_to_add.append(to_document)
 		
 			# Now create link documents
-			to_link_document = _LinkDocument()
-			to_link_document.name = link_property.getName()
-			to_link_document.from_id = from_document._id
-			to_link_document.from_type = from_document.type_
-			to_link_document.to_id = to_document._id
-			to_link_document.to_type = to_document.type_
-			
-			from_link_document = _LinkDocument()
-			from_link_document.name = link_property.getReverse()
-			from_link_document.from_id = to_document._id
-			from_link_document.from_type = to_document.type_
-			from_link_document.to_id = from_document._id
-			from_link_document.to_type = from_document.type_
+			link_document = _LinkDocument()
+			link_document.name = link_property.getName()
+			link_document.reverse_name = link_property.getReverse()
+			link_document.from_id = from_document._id
+			link_document.from_type = from_document.type_
+			link_document.to_id = to_document._id
+			link_document.to_type = to_document.type_
 			
 			# Add documents to database
-			documents_to_add.extend([to_link_document,from_link_document])
+			documents_to_add.append(link_document)
 		
 		return self.addMultiple(documents_to_add)
 	
-	# Add link to document
+	# Add linked document
 	def addLink(self,link_property,to_document):
 		
 		return self.addLinks(link_property, [to_document])
 	
+	# Get linked documents
 	def getLinks(self,link_property,start_key=None,limit=None,as_json=False):
 		
 		# Get the from doc and property itself
 		(from_document,link_property) = link_property
 		
-		start_key = [link_property.getName(),from_document._id,start_key] if start_key else [link_property.getName()]
-		end_key = [link_property.getName(),from_document._id,{}]
+		start_key = [from_document._id,link_property.getName(),start_key] if start_key else [from_document._id,link_property.getName()]
+		end_key = [from_document._id,link_property.getName(),{}]
 		
 		params = {
 			"include_docs" : not as_json,
@@ -993,37 +988,53 @@ class Database(object):
 		if limit:
 			params["limit"] = limit
 			
-		r = requests.get("%s%s/_view/links_" % (self._database_url,from_document.getSchemaDesignDocumentId()), params = params)
+		r = requests.get("%s/_design/_linkdocument/_view/links_by_name" % (self._database_url), params = params)
 		
 		if r.status_code == 200:
-			
+
 			return self._processViewResponse(r.json(),as_json)
 		
 		else:
 		
 			raise Exception(r.json())
 	
+	# Delete a linked document
 	def deleteLink(self,link_property,to_document):
 		
 		self.deleteLinks(link_property,[to_document])
 	
+	# Delete many linked documents
 	def deleteLinks(self,link_property,to_documents):
 		
 		# Get the from doc and property itself
 		(from_document,link_property) = link_property
 		
+		# Build the keys
 		_ids = []
-		
-		headers = {"content-type": "application/json"}	
+		for to_document in to_documents:
+			_ids.append([from_document._id,link_property.getName(),to_document._id])
+			
+		headers = {"content-type": "application/json"}
+		params = {
+			"include_docs" : True
+		}
+			
 		data = json.dumps({"keys":_ids})
 		
-		r = requests.post("%s/_design/_linkdocument/_view/get_by_name" % (self._database_url,from_document.getSchemaDesignDocumentId()), headers=headers,data=data)
-		
-		
-		# Now get reverse documents
-		if link_property.getReverse():
-			linked_class = link_property.getLinkedClass()
+		# Fetch the link docs
+		r = requests.post("%s/_design/_linkdocument/_view/by_name" % (self._database_url), headers=headers, params=params, data=data)
+
+		if r.status_code == 200:
+
+			# Turn into docs (TODO just need id so add a deleteMultipleById) 
+			documents_to_delete = self._processViewResponse(r.json(),False)
 			
+			# Finally delete the documents
+			return self.deleteMultiple(documents_to_delete)
+		
+		else:
+		
+			raise Exception(r.json())	
 		
 	# Loops over document classes and creates their schema's and if changed updates schema version and design docs for indexes
 	def sync(self):
@@ -1034,7 +1045,7 @@ class Database(object):
 			document_class = BaseDocument.type_class_map[document_class_name]
 			
 			# Don't sync design documents and system documents (seperate process for them)
-			if not issubclass(document_class, DesignDocument) and document_class not in [BaseDocument,Document,_LinkDocument]:
+			if not issubclass(document_class, DesignDocument) and document_class not in [BaseDocument,Document]:
 				
 				saved_schema_design_document = None
 				
@@ -1119,7 +1130,7 @@ class Database(object):
 			return documents
 		
 		else:
-			print r.url
+			
 			raise Exception(r.json())
 		
 """
@@ -1343,31 +1354,8 @@ class Document(BaseDocument):
 				index = getattr(cls,index_name)
 				function_string += index.getJSEmitStatement()
 			function_string += "}}"
-			
-			
+
 			schema_design_document.indexes_["map"] = function_string
-		
-		# Now the links
-		emit_strings = []
-		for property_name in cls._properties:
-			
-			# Get the property
-			cls_property = getattr(cls,property_name)
-			
-			# Is this a link property
-			if isinstance(cls_property,LinkProperty):
-				
-				emit_string = "emit(['%s',doc.from_id,doc.to_id],{'_id': doc.to_id});" % (cls_property.getName())
-				emit_strings.append(emit_string)
-		
-		if len(emit_strings) > 0:
-			function_string = "function(doc){"
-			function_string += "if(doc.type_=='_linkdocument' && doc.from_type == '%s'){" % (cls.__name__.lower())
-			for emit_string in emit_strings:
-				function_string += emit_string
-			function_string += "}}"
-			
-			schema_design_document.links_["map"] = function_string
 		
 		return schema_design_document
 			
@@ -1560,9 +1548,6 @@ class _SchemaDesignDocument(DesignDocument):
 	
 	# The indexes view
 	indexes_ = View()
-	
-	# The links view
-	links_ = View()
 
 
 """
@@ -1571,6 +1556,7 @@ Used to store relationship between documents
 class _LinkDocument(Document):
 	
 	name = StringProperty()
+	reverse_name = StringProperty()
 	from_type = StringProperty()
 	to_type = StringProperty()
 	from_id = StringProperty()
@@ -1584,11 +1570,24 @@ Design document dealing with links
 class _LinkDesignDocument(DesignDocument):
 
 	# Returns the actual link documents (used mostly in delete)
-	get_by_name = View({
+	by_name = View({
 		"map" :(
 			"function(doc) {"
 				"if(doc.type_=='_linkdocument') {"
 					"emit([doc.from_id,doc.name,doc.to_id],{'_id': doc._id});"
+					"emit([doc.to_id,doc.reverse_name,doc.from_id],{'_id': doc._id});"
+				"}"
+			"}"
+		)
+	})
+	
+	# Returns the linked docs
+	links_by_name = View({
+		"map" :(
+			"function(doc) {"
+				"if(doc.type_=='_linkdocument') {"
+					"emit([doc.from_id,doc.name,doc.to_id],{'_id': doc.to_id});"
+					"emit([doc.to_id,doc.reverse_name,doc.from_id],{'_id': doc.from_id});"
 				"}"
 			"}"
 		)

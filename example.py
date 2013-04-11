@@ -132,10 +132,8 @@ if __name__ == "__main__":
 	for queried_person in queried_persons:
 		print queried_person.name
 	
-	persons_pets = db.getLinks(person.related_pets,limit=1)
+	persons_pets = db.getLinks(person.related_pets)
 	print persons_pets
 	
-	test_doc = _SchemaDesignDocument()
-	test_doc.links_["map"] = "function(doc){}";
-	test_doc1 = _SchemaDesignDocument()
-	print test_doc1.instanceToDict()
+	result = db.deleteLinks(person.related_pets, persons_pets)
+	print result
