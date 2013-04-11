@@ -6,6 +6,7 @@ Created on 24 Jan 2013
 import requests
 import uuid
 import json
+import copy
 
 """
 Stores a mapping of document classes against name
@@ -826,9 +827,10 @@ class Database(object):
 				return document_data
 			
 			# Get the correct class (if not fall back to document) 
-			if document_data["type_"] in type_class_map:
+			if document_data["type_"] in BaseDocument.type_class_map:
 				
-				document_class = type_class_map[document_data["type_"]]["class"]
+				#document_class = type_class_map[document_data["type_"]]["class"]
+				document_class = BaseDocument.type_class_map[document_data["type_"]]
 			else:
 				document_class = Document
 			
@@ -893,6 +895,30 @@ class Database(object):
 			
 		return self._bulkDocs(documents)
 	
+	
+	# Pass a json response from a view query and inflates documents
+	def _processViewResponse(self,documents_data,as_json=False):
+		
+		documents = []
+			
+		for row in documents_data["rows"]:
+			
+			if as_json:
+				
+				documents.append(row["doc"])
+				
+			else:
+				
+				# Get the correct class (if not fall back to document) 
+				if row["doc"]["type_"] in BaseDocument.type_class_map:
+					document_class = BaseDocument.type_class_map[row["doc"]["type_"]]
+				else:
+					document_class = Document
+			
+				documents.append(document_class(document_data=row["doc"]))
+		
+		return documents
+	
 	# Get multiple documents
 	def getMultiple(self,_ids):
 		
@@ -902,30 +928,18 @@ class Database(object):
 		r = requests.post("%s/_all_docs?include_docs=true" % (self._database_url), headers=headers,data=data)
 		
 		if r.status_code == 200:
-			documents = []
-			documents_data = r.json()
 			
-			for row in documents_data["rows"]:
-				
-				# Get the correct class (if not fall back to document) 
-				if row["doc"]["type_"] in type_class_map:
-					document_class = type_class_map[row["doc"]["type_"]]["class"]
-				else:
-					document_class = Document
-			
-				documents.append(document_class(document_data=row["doc"]))
-			
-			return documents
+			return self._processViewResponse(r.json())
 		
 		else:
 			raise Exception(r.json())
 	
 	
 	# Add links to documents
-	def addLinks(self,link_property_tuple,to_documents):
+	def addLinks(self,link_property,to_documents):
 		
 		# Get the from doc and property itself
-		(from_document,link_property) = link_property_tuple
+		(from_document,link_property) = link_property
 		
 		# Check to make sure documents have been added to the db
 		documents_to_add = []
@@ -958,20 +972,69 @@ class Database(object):
 		return self.addMultiple(documents_to_add)
 	
 	# Add link to document
-	def addLink(self,link_property_tuple,to_document):
+	def addLink(self,link_property,to_document):
 		
-		return self.addLinks(link_property_tuple, [to_document])
+		return self.addLinks(link_property, [to_document])
 	
+	def getLinks(self,link_property,start_key=None,limit=None,as_json=False):
+		
+		# Get the from doc and property itself
+		(from_document,link_property) = link_property
+		
+		start_key = [link_property.getName(),from_document._id,start_key] if start_key else [link_property.getName()]
+		end_key = [link_property.getName(),from_document._id,{}]
+		
+		params = {
+			"include_docs" : not as_json,
+			"startkey" : json.dumps(start_key),
+			"endkey" : json.dumps(end_key)
+		}
+		
+		if limit:
+			params["limit"] = limit
+			
+		r = requests.get("%s%s/_view/links_" % (self._database_url,from_document.getSchemaDesignDocumentId()), params = params)
+		
+		if r.status_code == 200:
+			
+			return self._processViewResponse(r.json(),as_json)
+		
+		else:
+		
+			raise Exception(r.json())
+	
+	def deleteLink(self,link_property,to_document):
+		
+		self.deleteLinks(link_property,[to_document])
+	
+	def deleteLinks(self,link_property,to_documents):
+		
+		# Get the from doc and property itself
+		(from_document,link_property) = link_property
+		
+		_ids = []
+		
+		headers = {"content-type": "application/json"}	
+		data = json.dumps({"keys":_ids})
+		
+		r = requests.post("%s/_design/_linkdocument/_view/get_by_name" % (self._database_url,from_document.getSchemaDesignDocumentId()), headers=headers,data=data)
+		
+		
+		# Now get reverse documents
+		if link_property.getReverse():
+			linked_class = link_property.getLinkedClass()
+			
+		
 	# Loops over document classes and creates their schema's and if changed updates schema version and design docs for indexes
 	def sync(self):
 		
 		# Loop each document class
-		for document_class_name in type_class_map:
+		for document_class_name in BaseDocument.type_class_map:
 			
-			document_class = type_class_map[document_class_name]["class"]
+			document_class = BaseDocument.type_class_map[document_class_name]
 			
 			# Don't sync design documents and system documents (seperate process for them)
-			if not issubclass(document_class, DesignDocument) and document_class not in [Document,_LinkDocument]:
+			if not issubclass(document_class, DesignDocument) and document_class not in [BaseDocument,Document,_LinkDocument]:
 				
 				saved_schema_design_document = None
 				
@@ -994,10 +1057,10 @@ class Database(object):
 				except Exception:
 					
 					saved_schema_design_document = self.add(document_class.getSchemaDesignDocument())
-				
+						
 				# Set the schema rev for document class
-				type_class_map[document_class.__name__.lower()]["schema_rev"] = saved_schema_design_document._rev
-			
+				document_class.setCurrentSchemaRev(saved_schema_design_document._rev)
+				
 			# Check design documents and see if they have fixed id's...if so check for changes and sync if needed
 			elif issubclass(document_class, DesignDocument) and document_class.hasFixedId():
 				
@@ -1037,7 +1100,7 @@ class Database(object):
 		
 		headers = {"content-type": "application/json"}	
 		data = json.dumps({"keys":[key]})
-		r = requests.post("%s/_design/schema_%s/_view/indexes_" % (self._database_url, document_class.__name__.lower()), headers=headers,data=data)
+		r = requests.post("%s/%s/_view/indexes_" % (self._database_url, document_class.getSchemaDesignDocumentId()), headers=headers,data=data)
 		
 		if r.status_code == 200:
 			documents = []
@@ -1046,8 +1109,8 @@ class Database(object):
 			for row in documents_data["rows"]:
 				
 				# Get the correct class (if not fall back to document) 
-				if row["value"]["type_"] in type_class_map:
-					document_class = type_class_map[row["value"]["type_"]]["class"]
+				if row["value"]["type_"] in BaseDocument.type_class_map:
+					document_class = BaseDocument.type_class_map[row["value"]["type_"]]
 				else:
 					document_class = Document
 			
@@ -1056,6 +1119,7 @@ class Database(object):
 			return documents
 		
 		else:
+			print r.url
 			raise Exception(r.json())
 		
 """
@@ -1088,43 +1152,7 @@ class Index(object):
 		return emit_string % emit_keys
 
 
-""" 
-Metaclass to register the document class with a type
-"""
-class DocumentMetaClass(SchemaMetaClass):
-	
-	def __new__(cls, classname, bases, classDict):
-		
-		# Create the new document class
-		document_class = SchemaMetaClass.__new__(cls, classname, bases, classDict)
-		
-		# Extend statics
-		_indexes = []
-		for base in bases:
-			if hasattr(base,"_indexes"):
-				_indexes.extend(base._indexes)
-		
-		# Iterate through the new class' __dict__ and update all recognised index names
-		for name, attr in classDict.iteritems():
-			
-			if isinstance(attr, Index):
-				
-				# Store the name of the index in the descriptor
-				attr.setName(name)
-				
-				# Store the parent class in the property
-				attr.setParent(document_class)
-				
-				# Append the name of the index to class var
-				_indexes.append(name)
-		
-		# Set class property
-		document_class._indexes = _indexes
-		
-		# Store in map
-		type_class_map[classname.lower()] = {"class": document_class, "schema_rev" : None}
-		
-		return document_class
+
 
 """
 Wrapper to set fixed id for a document class e.g. singleton documents
@@ -1135,23 +1163,40 @@ def _id(id):
 		return document_class
 	return decorator
 
+""" 
+Metaclass for basedocument
+"""
+class BaseDocumentMetaClass(SchemaMetaClass):
+	
+	def __new__(cls, classname, bases, classDict):
+
+		# Create the new document class
+		base_document_class = SchemaMetaClass.__new__(cls, classname, bases, classDict)
+		
+		# Store in map (this is actually a static)
+		base_document_class.type_class_map[classname.lower()] = base_document_class
+		
+		return base_document_class
+
 
 """
-The main class to extend. Represents a couchdb schema bound document
+The base document class
 """
-class Document(Schema):
+class BaseDocument(Schema):
 	
-	__metaclass__ = DocumentMetaClass
+	__metaclass__ = BaseDocumentMetaClass
+	
+	# Static to store a mapping between type and class
+	type_class_map = {}
 	
 	# The properties
 	_id = StringProperty(required=True)
 	_rev = StringProperty(required=True)
 	type_ = StringProperty(required=True)
-	schema_rev_ = StringProperty(required=True)
 	
 	def __init__(self,_id=None,document_data=None):
 		
-		super(Document,self).__init__()
+		super(BaseDocument,self).__init__()
 		
 		# See if data passed in
 		if document_data == None:
@@ -1162,15 +1207,11 @@ class Document(Schema):
 			# Set the classname as the type if not got a default set
 			self.type_ = self.type_ if self.type_ else self.__class__.__name__.lower()
 			
-			# Store the rev of the current schema that has been used to create this document
-			self.schema_rev_ = type_class_map[self.__class__.__name__.lower()]["schema_rev"]
 		else:
 			self.instanceFromDict(document_data)
 			
 		# Store special flag for deletion
 		self._marked_for_delete = False
-		
-		
 	
 	# Get the document as dict
 	def instanceToDict(self):
@@ -1199,11 +1240,86 @@ class Document(Schema):
 	def setMarkedForDelete(self,marked_for_delete=True):
 		
 		self._marked_for_delete = marked_for_delete
+
+""" 
+Metaclass for document
+"""
+class DocumentMetaClass(BaseDocumentMetaClass):
+	
+	def __new__(cls, classname, bases, classDict):
+
+		# Create the new document class
+		document_class = BaseDocumentMetaClass.__new__(cls, classname, bases, classDict)
 		
+		# Extend statics
+		_indexes = []
+		for base in bases:
+			if hasattr(base,"_indexes"):
+				_indexes.extend(base._indexes)
+		
+		# Iterate through the new class' __dict__ and update all recognised index names
+		for name, attr in classDict.iteritems():
+			
+			if isinstance(attr, Index):
+				
+				# Store the name of the index in the descriptor
+				attr.setName(name)
+				
+				# Store the parent class in the property
+				attr.setParent(document_class)
+				
+				# Append the name of the index to class var
+				_indexes.append(name)
+		
+		# Set class property
+		document_class._indexes = _indexes
+
+		return document_class
+
+
+"""
+The main class to extend. Represents a couchdb schema bound document
+"""
+class Document(BaseDocument):
+	
+	__metaclass__ = DocumentMetaClass
+	
+	# Static map to store the current rev
+	_current_schema_rev = {}
+	
+	# Used to keep track of which schema version created this
+	schema_rev_ = StringProperty(required=True)
+	
+	def __init__(self,_id=None,document_data=None):
+		
+		super(Document,self).__init__(_id=_id,document_data=document_data)
+		
+		# See if data passed in
+		if document_data == None:
+		
+			# Store the rev of the current schema that has been used to create this document
+			self.schema_rev_ = self.getCurrentSchemaRev()
+			
+	# Get the current rev for this class
+	@classmethod
+	def getCurrentSchemaRev(cls):	
+		
+		if cls.__name__.lower() in Document._current_schema_rev:
+			return Document._current_schema_rev[cls.__name__.lower()]
+		else:
+			return None
+	
+	# Set the current rev for this class
+	@classmethod
+	def setCurrentSchemaRev(cls,schema_rev):	
+		
+		Document._current_schema_rev[cls.__name__.lower()] = schema_rev
+	
+	# Get the document id
 	@classmethod
 	def getSchemaDesignDocumentId(cls):
 		
-		return "_design/schema_%s" % (cls.__name__.lower())
+		return "_design/_schema_%s" % (cls.__name__.lower())
 	
 	# Schema design doc contains index and link views
 	@classmethod
@@ -1211,7 +1327,7 @@ class Document(Schema):
 		
 		# Create an instance of the schema document
 		schema_design_document = _SchemaDesignDocument(_id=cls.getSchemaDesignDocumentId())
-		
+
 		# Set the schema
 		schema_design_document.schema_ = json.dumps(cls.schemaToDict())
 		
@@ -1230,8 +1346,7 @@ class Document(Schema):
 			
 			
 			schema_design_document.indexes_["map"] = function_string
-			
-			
+		
 		# Now the links
 		emit_strings = []
 		for property_name in cls._properties:
@@ -1242,7 +1357,7 @@ class Document(Schema):
 			# Is this a link property
 			if isinstance(cls_property,LinkProperty):
 				
-				emit_string = "emit(['%s',doc.from_id,doc.to_id],doc.to_id);" % (cls_property.getName())
+				emit_string = "emit(['%s',doc.from_id,doc.to_id],{'_id': doc.to_id});" % (cls_property.getName())
 				emit_strings.append(emit_string)
 		
 		if len(emit_strings) > 0:
@@ -1256,19 +1371,7 @@ class Document(Schema):
 		
 		return schema_design_document
 			
-		
-"""
-Used to store relationship between documents
-"""
-class _LinkDocument(Document):
-	
-	name = StringProperty()
-	from_type = StringProperty()
-	to_type = StringProperty()
-	from_id = StringProperty()
-	to_id = StringProperty()
-
-
+			
 """
 Represents a view
 """
@@ -1278,32 +1381,35 @@ class View(object):
 	def __init__(self,default_value=None):
 		
 		self._name = None
-		self._default_value = default_value
+		self._default_value = default_value if default_value else {"map" : {}}
 			
 	def __get__(self, instance, owner):
 		
 		if instance is None:
 			return self
 		else:
-			return instance._viewValues[self._name]
+			self._checkForViewValue(instance)
 			
-	
+			return instance._view_values[self._name]
+			
 	def __set__(self, instance, value):
 		
 		if instance:
 			if self._validate(value):
+				
+				self._checkForViewValue(instance)
+				
+				instance._view_values[self._name] = value
 	
-				instance._viewValues[self._name] = value
-	
-	# Make sure view value has been set	
+	# Make sure property value has been set	
 	def _checkForViewValue(self,instance):
 		
 		# Check to see if view exists on instance
-		if self._name not in instance._viewValues:
-				
-			instance._viewValues[self._name] = None
-	
-	
+		if self._name not in instance._view_values:
+			
+			# If not set default (must deepcopy as object...took a day to find this!)
+			instance._view_values[self._name] = copy.deepcopy(self._default_value)
+
 	# Set the name of the property
 	def setName(self,name):
 		
@@ -1330,6 +1436,7 @@ class View(object):
 	# Validate	
 	def _validate(self,value):
 		
+		# Must contain a map function at minimum
 		if value and ("map" not in value):
 			raise ValidationError("Map function missing")
 		
@@ -1338,7 +1445,7 @@ class View(object):
 """ 
 Metaclass to for design documents
 """
-class DesignDocumentMetaClass(DocumentMetaClass):
+class DesignDocumentMetaClass(BaseDocumentMetaClass):
 	
 	def __new__(cls, classname, bases, classDict):
 		
@@ -1368,35 +1475,27 @@ class DesignDocumentMetaClass(DocumentMetaClass):
 		# Set class property
 		design_document_class._views = _views
 
-		
 		return design_document_class
 
 
 """
 A design document
 """
-class DesignDocument(Document):
+class DesignDocument(BaseDocument):
 
 	__metaclass__ = DesignDocumentMetaClass
 	
 	def __init__(self,_id=None,document_data=None):
 		
 		# Used to store actual values of views (can't store in descriptor objects as they are static)
-		self._viewValues = {}
+		self._view_values = {}
 		
 		# Use fixed id if set
 		_id = self._fixed_id if hasattr(self,"_fixed_id") else _id
-		
-		# Set default view functions
-		for view_name in self._views:
-			
-			# Defaults
-			default_value = getattr(self.__class__,view_name).getDefaultValue()
-			setattr(self,view_name,default_value)
-			
+
 		super(DesignDocument,self).__init__(_id=_id,document_data=document_data)
 		
-	
+	# Overridden to deal with views
 	def instanceToDict(self):
 		
 		document_data = super(DesignDocument,self).instanceToDict()
@@ -1404,9 +1503,9 @@ class DesignDocument(Document):
 		document_data["views"] = {}
 		
 		# Now add in view data
-		for view_name in self.__class__._views:
+		for view_name in self._views:
 			
-			document_data["views"][view_name] = self._viewValues[view_name]
+			document_data["views"][view_name] = getattr(self,view_name)
 		
 		return document_data
 	
@@ -1460,9 +1559,40 @@ class _SchemaDesignDocument(DesignDocument):
 	schema_ = StringProperty()
 	
 	# The indexes view
-	indexes_ = View({"map": None})
+	indexes_ = View()
 	
 	# The links view
-	links_ = View({"map": None})
+	links_ = View()
+
+
+"""
+Used to store relationship between documents
+"""
+class _LinkDocument(Document):
+	
+	name = StringProperty()
+	from_type = StringProperty()
+	to_type = StringProperty()
+	from_id = StringProperty()
+	to_id = StringProperty()
+	
+	
+"""
+Design document dealing with links
+"""
+@_id("_design/_linkdocument")
+class _LinkDesignDocument(DesignDocument):
+
+	# Returns the actual link documents (used mostly in delete)
+	get_by_name = View({
+		"map" :(
+			"function(doc) {"
+				"if(doc.type_=='_linkdocument') {"
+					"emit([doc.from_id,doc.name,doc.to_id],{'_id': doc._id});"
+				"}"
+			"}"
+		)
+	})
+
 	
 	

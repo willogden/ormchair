@@ -4,18 +4,19 @@ Created on 14 Mar 2013
 @author: will ogden
 '''
 import json
-from ormchair import Server,Document,DesignDocument,View,Index,StringProperty,DictProperty,ListProperty,LinkProperty,EmbeddedLinkProperty,_id
+from ormchair import Server,Document,DesignDocument,View,Index,StringProperty,DictProperty,ListProperty,LinkProperty,EmbeddedLinkProperty,_id,_SchemaDesignDocument
 
 # User created classes
 @_id("_design/tester")
 class TestDesignDocument(DesignDocument):
 	
-	all2 = View("""
-		'map':
-			'function(doc) {
-				emit("test2",doc);
-			}'
-	""")
+	all2 = View({
+		"map" :(
+			"function(doc) {"
+				"emit('test2',doc);"
+			"}"
+		)
+	})
 	
 class Pet(Document):
 	
@@ -67,7 +68,7 @@ if __name__ == "__main__":
 	else:
 		db = server.getDatabase("test")
 	
-	db.syncSchemas()
+	db.sync()
 	
 	
 	person = Person()
@@ -131,5 +132,10 @@ if __name__ == "__main__":
 	for queried_person in queried_persons:
 		print queried_person.name
 	
-	#test2 = TestDesignDocument()
-	#db.add(test2)
+	persons_pets = db.getLinks(person.related_pets,limit=1)
+	print persons_pets
+	
+	test_doc = _SchemaDesignDocument()
+	test_doc.links_["map"] = "function(doc){}";
+	test_doc1 = _SchemaDesignDocument()
+	print test_doc1.instanceToDict()
