@@ -4,23 +4,37 @@ Created on 14 Mar 2013
 @author: will ogden
 '''
 import json
-from ormchair import Server,Document,DesignDocument,View,Index,StringProperty,DictProperty,ListProperty,LinkProperty,EmbeddedLinkProperty,_id,_SchemaDesignDocument
+from ormchair import Session,Document,DesignDocument,View,Index,StringProperty,DictProperty,ListProperty,LinkProperty,EmbeddedLinkProperty,_id,_SchemaDesignDocument
 
 # User created classes
 @_id("_design/tester")
 class TestDesignDocument(DesignDocument):
 	
-	all2 = View({
+	all_pets = View({
 		"map" :(
-			"function(doc) {"
-				"emit('test2',doc);"
-			"}"
+			'function(doc) {'
+				'if(doc.type_=="pet") {'
+					'emit(doc._id,null);'
+				'}'
+			'}'
 		)
 	})
 	
 class Pet(Document):
 	
 	name = StringProperty(default="dog")
+	
+	all = View({
+		"map" :(
+			'function(doc) {'
+				'if(doc.type_=="pet") {'
+					'emit(doc._id,null);'
+				'}'
+			'}'
+		)
+	})
+	
+	get_by_name = Index("name")
 		
 
 class Person(Document):
@@ -53,7 +67,6 @@ class Person(Document):
 		EmbeddedLinkProperty(Pet)
 	)
 	
-	test_property = StringProperty()
 	
 	get_by_name = Index("name")
 	get_by_name_and_address = Index("name","address.address_1")
@@ -61,12 +74,12 @@ class Person(Document):
 
 if __name__ == "__main__":
 
-	server = Server("http://127.0.0.1:5984")
+	session = Session("http://127.0.0.1:5984",username="testadmin", password="testadmin")
 	
-	if not server.databaseExists("test"):
-		db = server.createDatabase("test")
+	if not session.databaseExists("test"):
+		db = session.createDatabase("test")
 	else:
-		db = server.getDatabase("test")
+		db = session.getDatabase("test")
 	
 	db.sync()
 	
@@ -128,12 +141,17 @@ if __name__ == "__main__":
 	
 	print json.dumps(Person.schemaToDict())
 	
-	queried_persons = db.getByIndex(Person.get_by_name,["WILLIAM"])
+	queried_persons = db.getByIndex(Person.get_by_name,key=["WILLIAM"])
 	for queried_person in queried_persons:
-		print queried_person.name
+		if isinstance(queried_person,Document):
+			print queried_person.name
+		else:
+			print queried_person
 	
 	persons_pets = db.getLinks(person.related_pets)
 	print persons_pets
 	
 	result = db.deleteLinks(person.related_pets, persons_pets)
 	print result
+	
+	print db.getByView(Pet.all)
