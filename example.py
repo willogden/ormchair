@@ -92,7 +92,7 @@ if __name__ == "__main__":
 	person.address.address_1 = "1 work road"
 	person.address.postcode.postcode_1 = "RH16"
 	person.other_addresses.extend([{"address_1":"my street","address_2":"UK"},{"address_1":"44 the toad","address_2":"USA"}])
-	print person.other_addresses[1]
+	print "other addresses", person.other_addresses[1].address_1
 	
 	person1.name = "kate"
 	person1.address.address_1 = "1 home road"

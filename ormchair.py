@@ -150,9 +150,6 @@ class Schema(object):
 		# Used to store actual values of properties (can't store in descriptor objects as they are static)
 		self._property_values = {}
 
-		# Used to store unknown property values e.g. ones that don't match the schema but are passed in
-		self._unknown_property_values = []
-		
 		# Set parent and defaults on properties
 		for property_name in self._properties:
 			
@@ -162,12 +159,7 @@ class Schema(object):
 	
 	# Set the values of the schema from a dict	
 	def instanceFromDict(self,dict_data,ignore_properties=None):
-		
-		# If this is a root level schema empty the unknown properties list
-		if self.__class__._is_root:
-			
-			del self.getUnknownPropertyValues()[:]
-			
+	
 		if isinstance(dict_data,dict):
 			
 			# Loop known properties
@@ -175,22 +167,15 @@ class Schema(object):
 				
 				if property_name in dict_data:
 					setattr(self,property_name,dict_data[property_name])
+					# Remove the item from the dict
+					del dict_data[property_name]
 				elif getattr(self.__class__,property_name).getRequired():
 					raise ValidationError("Property %s is required but not present" % property_name)
 			
-			# Convert to sets
-			data_set = set(dict_data.keys())
-			properties_set = set(self._properties)
-			
-			# Remove keys to ignore (they're probably handled elsewhere by a subclass)
-			data_set = data_set - set(ignore_properties) if ignore_properties else data_set
-			
-			# Get the unknowns
-			unknown_properties_set = data_set.difference(properties_set)
-			for unknown_property in unknown_properties_set:
-				self.getUnknownPropertyValues().append(unknown_property)
-			
+			if len(dict_data.keys()) > 0:
 	
+				raise ValidationError("Unknown properties found")
+
 	# Export the schemas values as a basic dict
 	def instanceToDict(self):
 		
@@ -207,10 +192,6 @@ class Schema(object):
 	def getRootInstance(self):
 		
 		return self._root_instance
-	
-	def getUnknownPropertyValues(self):
-		
-		return self._unknown_property_values
 	
 	# Export the class schema as a dict
 	@classmethod
@@ -254,8 +235,8 @@ class StringProperty(Property):
 	
 	def __init__(self,*args,**kwargs):
 		
-		self._minLength = kwargs.pop('minLength', None)
-		self._maxLength = kwargs.pop('maxLength', None)
+		self._min_length = kwargs.pop('min_length', None)
+		self._max_length = kwargs.pop('max_length', None)
 		
 		# Not implemented
 		self._format = kwargs.pop('format', None)
@@ -271,11 +252,11 @@ class StringProperty(Property):
 			raise ValidationError("Not a string")
 		
 		# Check minimum length
-		if value and self._minLength and len(value) < self._minLength:
+		if value and self._min_length and len(value) < self._min_length:
 			raise ValidationError("String is less than minimum length")
 			
 		# Check maximum
-		if value and self._maxLength and len(value) > self._maxLength:
+		if value and self._max_length and len(value) > self._max_length:
 			raise ValidationError("String is greater than maximum length")
 		
 		return True
@@ -287,14 +268,11 @@ class StringProperty(Property):
 		
 		schema_dict["type"] = "string"
 
-		if self._default:
-			schema_dict["default"] = str(self._default)
+		if self._min_length:
+			schema_dict["minLength"] = self._min_length
 		
-		if self._minLength:
-			schema_dict["minLength"] = self._minLength
-		
-		if self._maxLength:
-			schema_dict["maxLength"] = self._maxLength
+		if self._max_length:
+			schema_dict["maxLength"] = self._max_length
 			
 		return schema_dict
 
@@ -310,7 +288,7 @@ class NumberProperty(Property):
 		
 		# Not implemented yet
 		self.format =kwargs.pop('format', None)
-		self.divisibleBy = kwargs.pop('divisibleBy', None)
+		self.divisible_by = kwargs.pop('divisible_by', None)
 		
 		super(NumberProperty, self).__init__(self,*args,**kwargs)
 		
@@ -337,9 +315,6 @@ class NumberProperty(Property):
 		schema_dict = super(NumberProperty,self).schemaToDict()
 		
 		schema_dict["type"] = "number"
-		
-		if self._default:
-			schema_dict["default"] = self._default
 		
 		if self._minimum:
 			schema_dict["minimum"] = self._minimum
@@ -415,7 +390,7 @@ class DictProperty(Property):
 		
 		# Create a new subclass of Schema
 		kwargs["_is_root"] = False
-		self._cls = type('SchemaSubClass', (Schema,), kwargs)
+		self._cls = type('DictPropertySchema', (Schema,), kwargs)
 		
 	def __get__(self, instance, owner):
 		
@@ -523,6 +498,27 @@ class DictPropertyList(list):
 		
 		return list_instance._property
 	
+	# Need to override as only need _property value
+	def __contains__(self, item):
+		
+		property_list = map(lambda list_instance: list_instance._property, super(DictPropertyList, self).__iter__())
+		return property_list.__contains__(item)
+	
+	# Need to override as only need _property value
+	def __iter__(self):
+	
+		return map(lambda list_instance: list_instance._property, super(DictPropertyList, self).__iter__()).__iter__()
+	
+	# Need to override as only need _property value
+	def __getslice__(self,i,j):
+
+		return map(lambda list_instance: list_instance._property,  super(DictPropertyList, self).__getslice__(i,j))
+	
+	# Need to override as only need _property value
+	def __eq__(self, other):
+		
+		return self[:].__eq__(other)
+		
 	# Override all methods that add an item to the list
 	append = wrap(list.append)
 	extend = wrap(list.extend,takes_list=True)
@@ -543,7 +539,7 @@ class ListProperty(Property):
 		
 		# Create a new subclass of Schema based on passed in property instance
 		kwargs = {"_is_root" : False, "_property" : property_instance}
-		self._cls = type('SchemaSubClass', (Schema,), kwargs)
+		self._cls = type('ListPropertySchema', (Schema,), kwargs)
 		
 	# Get
 	def __get__(self, instance, owner):
@@ -581,8 +577,10 @@ class ListProperty(Property):
 		# Loop over dictpropertlist
 		for item in self.__get__(instance,None):
 			
-			# Only interested in the value of the _property property
-			list_data.append(item.instanceToDict()["_property"])
+			if issubclass(item.__class__,Schema):
+				list_data.append(item.instanceToDict())
+			else:
+				list_data.append(item)
 				
 		return list_data
 	
@@ -598,12 +596,12 @@ Property to link to other schemas
 """
 class LinkProperty(Property):
 	
-	def __init__(self,linked_class,*args,**kwargs):
+	def __init__(self,linked_class,reverse=None):
 		
 		self._linked_class = linked_class
-		self._reverse = kwargs.pop('reverse', None)
+		self._reverse = reverse
 		
-		super(LinkProperty,self).__init__(*args,**kwargs)
+		super(LinkProperty,self).__init__()
 		
 		# Add a reverse relation
 		if self._reverse and not hasattr(self._linked_class,self._reverse):
@@ -663,6 +661,10 @@ class EmbeddedLinkProperty(Property):
 		
 		self._linked_class = linked_class
 		
+		# Check the linked class is a subclass of basedocument
+		if not issubclass(self._linked_class,BaseDocument):
+			raise ValidationError("Linked class must be a subclass of BaseDocument")
+		
 		super(EmbeddedLinkProperty, self).__init__(self,**kwargs)
 	
 	def __get__(self, instance, owner):
@@ -690,8 +692,10 @@ class EmbeddedLinkProperty(Property):
 			instance._property_values[self._name]._inflated = True
 			instance._property_values[self._name]._document = value
 			instance._property_values[self._name]._id = value._id
-		else:
+		elif isinstance(value,basestring):
 			instance._property_values[self._name]._id = value
+		elif value:
+			raise ValidationError("Not an instance of a linked class or an _id")
 	
 	# Make sure property value has been set	
 	def _checkForPropertyValue(self,instance):
@@ -1093,8 +1097,8 @@ class Database(object):
 						saved_schema_design_document = self.update(current_schema_design_document)
 	
 				# Add
-				except Exception:
-					
+				except Exception as e:
+					print e
 					saved_schema_design_document = self.add(document_class.getSchemaDesignDocument())
 						
 				# Set the schema version for document class
@@ -1111,7 +1115,7 @@ class Database(object):
 					current_design_document._rev = saved_design_document._rev
 	
 					# Compare with saved (also check for unknown properties e.g. things in the doc that aren't in the schema)
-					if json.dumps(current_design_document.instanceToDict()) != json.dumps(saved_design_document.instanceToDict()) or len(saved_design_document.getUnknownPropertyValues()) > 0:
+					if json.dumps(current_design_document.instanceToDict()) != json.dumps(saved_design_document.instanceToDict()) > 0:
 						
 						saved_design_document = self.update(current_design_document)
 				
@@ -1489,8 +1493,6 @@ class DesignDocument(BaseDocument):
 	# Set the values of the schema from a dict	
 	def instanceFromDict(self,dict_data):
 		
-		super(DesignDocument,self).instanceFromDict(dict_data,ignore_properties=["views"])
-		
 		if isinstance(dict_data,dict):
 			
 			# Loop known views
@@ -1503,21 +1505,12 @@ class DesignDocument(BaseDocument):
 				elif "views" in dict_data and view_name not in dict_data["views"]: 
 					
 					raise ValidationError("View %s is required but not present" % view_name)
-						
-			# Convert to sets
-			data_set = set(dict_data["views"].keys()) if "views" in dict_data else set()
-			views_set = set(self.__class__._views)
 			
-			# Get the unknowns
-			unknown_views_set = data_set.difference(views_set)
-			
-			unknown_views = []
-			for unknown_view in unknown_views_set:
-				unknown_views.append(unknown_view)
-			
-			# Store under the single views property
-			if len(unknown_views) > 0:	
-				self.getUnknownPropertyValues().append({"views": unknown_views})				
+			# Remove from dict for validation for extraneous properties
+			if "views" in dict_data:
+				del dict_data["views"]
+		
+		super(DesignDocument,self).instanceFromDict(dict_data)
 	
 	# Has the design doc been set an id as part of the class definition (most will have)
 	@classmethod
