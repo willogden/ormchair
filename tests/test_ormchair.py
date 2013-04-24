@@ -540,8 +540,154 @@ class LinkPropertyTestCase(unittest.TestCase):
 		
 		self.assertTrue(hasattr(linked_class,reverse_property_name))
 		self.assertIsInstance(getattr(linked_class,reverse_property_name), ormchair.LinkProperty)
+
+class SessionTestCase(unittest.TestCase):
+	
+	def setUp(self):
+		
+		self.session = ormchair.Session("http://127.0.0.1:5984",username="testadmin", password="testadmin")
+		if self.session.databaseExists("test_ormchair"):
+			self.session.deleteDatabase("test_ormchair")
+
+	def tearDown(self):
+		
+		self.session = None
+		
+	def test_create_database(self):
+		
+		test_ormchair_db = self.session.createDatabase("test_ormchair")
+		self.assertIsInstance(test_ormchair_db,ormchair.Database)
+		
+	
+	def test_get_database(self):
+		
+		self.session.createDatabase("test_ormchair")
+		test_ormchair_db = self.session.getDatabase("test_ormchair")
+		self.assertIsInstance(test_ormchair_db,ormchair.Database)
+
+			
+	def test_delete_database(self):
+		
+		self.session.createDatabase("test_ormchair")
+		self.assertTrue(self.session.databaseExists("test_ormchair"))
+		self.session.deleteDatabase("test_ormchair")
+		self.assertFalse(self.session.databaseExists("test_ormchair"))
+		
+class DatabaseTestCase(unittest.TestCase):
+	
+	def setUp(self):
+		
+		self.session = ormchair.Session("http://127.0.0.1:5984",username="testadmin", password="testadmin")
+		
+		if self.session.databaseExists("test_ormchair"):
+			self.session.deleteDatabase("test_ormchair")
+		
+		self.test_ormchair_db = self.session.createDatabase("test_ormchair")
+		
+		# Test data
+		@ormchair._id("_design/all_pets")
+		class AllPetsDesignDocument(ormchair.DesignDocument):
+			
+			all_pets = ormchair.View({
+				"map" :(
+					'function(doc) {'
+						'if(doc.type_=="pet") {'
+							'emit(doc._id,null);'
+						'}'
+					'}'
+				)
+			})
 		
 		
+		class Pet(ormchair.Document):
+	
+			name = ormchair.StringProperty(default="dog")
+			
+			all = ormchair.View({
+				"map" :(
+					'function(doc) {'
+						'if(doc.type_=="pet") {'
+							'emit(doc._id,null);'
+						'}'
+					'}'
+				)
+			})
+			
+			get_by_name = ormchair.Index("name")
+				
+		
+		class Person(ormchair.Document):
+			
+			name = ormchair.StringProperty(default="joe bloggs")
+			address = ormchair.DictProperty(
+				address_1 = ormchair.StringProperty(),
+				address_2 = ormchair.StringProperty(default="wessex"),
+				postcode = ormchair.DictProperty(
+					postcode_1 = ormchair.StringProperty(),
+					postcode_2 = ormchair.StringProperty(),
+					extra_postcodes = ormchair.ListProperty(
+						ormchair.StringProperty()
+					)
+				)
+			)
+			
+			other_addresses = ormchair.ListProperty(
+				ormchair.DictProperty(
+					address_1 = ormchair.StringProperty(),
+					address_2 = ormchair.StringProperty(default="wessex")
+				)
+			)
+			
+			related_pets = ormchair.LinkProperty(Pet,reverse="owner")
+			
+			best_pet = ormchair.EmbeddedLinkProperty(Pet)
+			
+			owned_pets = ormchair.ListProperty(
+				ormchair.EmbeddedLinkProperty(Pet)
+			)
+			
+			
+			get_by_name = ormchair.Index("name")
+			get_by_name_and_address = ormchair.Index("name","address.address_1")
+		
+		self.pet_class = Pet
+		self.person_class = Person
+		
+		self.test_ormchair_db.sync()
+		
+	def tearDown(self):
+		
+		self.session = None
+	
+	def test_sync(self):
+		
+		all_pets_design_document = self.test_ormchair_db.get("_design/all_pets")
+		pet_schema_design_document = self.test_ormchair_db.get(self.pet_class.getSchemaDesignDocumentId())
+		person_schema_design_document = self.test_ormchair_db.get(self.person_class.getSchemaDesignDocumentId())
+		
+		self.assertTrue(issubclass(all_pets_design_document.__class__,ormchair.DesignDocument))
+		self.assertTrue(issubclass(pet_schema_design_document.__class__,ormchair.DesignDocument))
+		self.assertTrue(issubclass(person_schema_design_document.__class__,ormchair.DesignDocument))
+		
+		self.assertTrue(len(all_pets_design_document._rev)>0)
+		self.assertTrue(len(pet_schema_design_document._rev)>0)
+		self.assertTrue(len(person_schema_design_document._rev)>0)
+	
+	def test_add_document(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		person2 = self.person_class()
+		person2.name = "Tom"
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+		
+		self.assertNotEqual(person1.name, person2.name)
 		
 def suite():
 	
@@ -588,7 +734,11 @@ def suite():
 	suite.addTest(LinkPropertyTestCase('test_return_type'))
 	suite.addTest(LinkPropertyTestCase('test_reverse_property'))
 	
+	suite.addTest(SessionTestCase('test_create_database'))
+	suite.addTest(SessionTestCase('test_get_database'))
+	suite.addTest(SessionTestCase('test_delete_database'))
 	
+	suite.addTest(DatabaseTestCase('test_sync'))
 	return suite
 
 if __name__ == "__main__":

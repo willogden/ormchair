@@ -779,7 +779,14 @@ class Session(object):
 			return True if database_name in r.json() else False
 		else:
 			raise Exception(r.json())
+	
+	def deleteDatabase(self,database_name):
 		
+		database_url = "%s/%s/" % (self._url, database_name)
+		r = self._database_session.delete(database_url)
+		
+		if r.status_code != 200:
+			raise Exception(r.json())
 
 """
 Represents a couchdb database
@@ -1098,9 +1105,9 @@ class Database(object):
 	
 				# Add
 				except Exception as e:
-					print e
+					
 					saved_schema_design_document = self.add(document_class.getSchemaDesignDocument())
-						
+					
 				# Set the schema version for document class
 				document_class.setCurrentSchemaVersion(saved_schema_design_document.version)
 				
