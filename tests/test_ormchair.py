@@ -652,12 +652,17 @@ class DatabaseTestCase(unittest.TestCase):
 		
 		self.pet_class = Pet
 		self.person_class = Person
+		self.all_pets_design_document_class = AllPetsDesignDocument
 		
 		self.test_ormchair_db.sync()
 		
 	def tearDown(self):
 		
 		self.session = None
+		self.pet_class = None
+		self.person_class = None
+		self.all_pets_design_document_class = None
+		self.test_ormchair_db = None
 	
 	def test_sync(self):
 		
@@ -677,6 +682,18 @@ class DatabaseTestCase(unittest.TestCase):
 		
 		person1 = self.person_class()
 		person1.name = "Will"
+
+		try:
+			person1 = self.test_ormchair_db.add(person1)
+			person1_fetched = self.test_ormchair_db.get(person1._id)
+			self.assertEqual(person1, person1_fetched)
+		except Exception as e:
+			self.fail()
+		
+	def test_add_documents(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
 		
 		person2 = self.person_class()
 		person2.name = "Tom"
@@ -688,6 +705,190 @@ class DatabaseTestCase(unittest.TestCase):
 		pet2.name = "Snoop"
 		
 		self.assertNotEqual(person1.name, person2.name)
+		self.assertNotEqual(pet1.name, pet2.name)
+		
+		try:
+			self.test_ormchair_db.addMultiple([person1,person2,pet1,pet2])
+			fetched = self.test_ormchair_db.getMultiple([person1._id,person2._id,pet1._id,pet2._id])
+			self.assertEqual(person1, fetched[0])
+			self.assertEqual(person2, fetched[1])
+			self.assertEqual(pet1, fetched[2])
+			self.assertEqual(pet2, fetched[3])
+			
+		except Exception as e:
+			self.fail()
+			
+	def test_delete_document(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		self.test_ormchair_db.add(person1)
+		
+		person1_fetched = self.test_ormchair_db.get(person1._id)
+		self.assertEquals(person1, person1_fetched)
+		
+		self.test_ormchair_db.delete(person1)
+		self.assertRaises(Exception, self.test_ormchair_db.get,person1._id)
+		
+	def test_delete_documents(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		person2 = self.person_class()
+		person2.name = "Tom"
+		
+		self.test_ormchair_db.addMultiple([person1,person2])
+		
+		persons_fetched = self.test_ormchair_db.getMultiple([person1._id,person2._id])
+		self.assertIn(person1, persons_fetched)
+		self.assertIn(person2, persons_fetched)
+		
+		self.test_ormchair_db.deleteMultiple([person1,person2])
+		self.assertRaises(Exception, self.test_ormchair_db.getMultiple,[person1._id,person2._id])
+			
+	def test_update_documents(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		person2 = self.person_class()
+		person2.name = "Tom"
+				
+		try:
+			self.test_ormchair_db.addMultiple([person1,person2])
+			
+			# Make rev old version so update should fail for person1
+			old_rev = person1._rev
+			person1.name = "Will2"
+			self.test_ormchair_db.update(person1)
+			person1._rev = old_rev
+			
+			(ok_docs,failed_docs) = self.test_ormchair_db.updateMultiple([person1,person2])
+			
+			self.assertEqual(ok_docs[0], person2)
+			self.assertEqual(failed_docs[0], person1)
+		
+		except Exception as e:
+			self.fail()
+	
+	def test_add_embedded_link(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		person1.best_pet = pet1
+		
+		self.test_ormchair_db.update(person1)
+		
+		fetched_person1 = self.test_ormchair_db.get(person1._id)
+		
+		self.assertEqual(fetched_person1.best_pet,pet1._id)
+	
+	def test_add_link(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		self.test_ormchair_db.addLink(person1.related_pets, pet1)
+		
+		person1_related_pets = self.test_ormchair_db.getLinks(person1.related_pets)
+		
+		self.assertEqual(pet1, person1_related_pets[0])
+
+	def test_add_links(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+		
+		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet2])
+		
+		person1_related_pets = self.test_ormchair_db.getLinks(person1.related_pets)
+		
+		self.assertIn(pet1, person1_related_pets)
+		self.assertIn(pet2, person1_related_pets)
+		
+	def test_delete_links(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+		
+		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet2])
+		
+		person1_related_pets = self.test_ormchair_db.getLinks(person1.related_pets)
+		
+		self.assertIn(pet1, person1_related_pets)
+		self.assertIn(pet2, person1_related_pets)
+		
+		person1_related_pets = self.test_ormchair_db.deleteLinks(person1.related_pets,[pet1,pet2])
+		
+		person1_related_pets = self.test_ormchair_db.getLinks(person1.related_pets)
+		
+		self.assertNotIn(pet1, person1_related_pets)
+		self.assertNotIn(pet2, person1_related_pets)
+	
+	def test_get_by_index(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		person2 = self.person_class()
+		person2.name = "Tom"
+		
+		self.test_ormchair_db.addMultiple([person1,person2])
+		
+		queried_persons = self.test_ormchair_db.getByIndex(self.person_class.get_by_name,key=["Tom"])
+		
+		self.assertIn(person2,queried_persons)
+		
+	def test_get_by_view(self):
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+		
+		self.test_ormchair_db.addMultiple([pet1,pet2])
+		
+		queried_pets = self.test_ormchair_db.getByView(self.all_pets_design_document_class.all_pets)
+		
+		self.assertIn(pet1,queried_pets)
+		self.assertIn(pet2,queried_pets)
+		
+	def test_get_by_view_in_document(self):
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+		
+		self.test_ormchair_db.addMultiple([pet1,pet2])
+		
+		queried_pets = self.test_ormchair_db.getByView(self.pet_class.all)
+		
+		self.assertIn(pet1,queried_pets)
+		self.assertIn(pet2,queried_pets)
 		
 def suite():
 	
@@ -739,6 +940,19 @@ def suite():
 	suite.addTest(SessionTestCase('test_delete_database'))
 	
 	suite.addTest(DatabaseTestCase('test_sync'))
+	suite.addTest(DatabaseTestCase('test_add_document'))
+	suite.addTest(DatabaseTestCase('test_add_documents'))
+	suite.addTest(DatabaseTestCase('test_delete_document'))
+	suite.addTest(DatabaseTestCase('test_delete_documents'))
+	suite.addTest(DatabaseTestCase('test_update_documents'))
+	suite.addTest(DatabaseTestCase('test_add_embedded_link'))
+	suite.addTest(DatabaseTestCase('test_add_link'))
+	suite.addTest(DatabaseTestCase('test_add_links'))
+	suite.addTest(DatabaseTestCase('test_delete_links'))
+	suite.addTest(DatabaseTestCase('test_get_by_index'))
+	suite.addTest(DatabaseTestCase('test_get_by_view'))
+	suite.addTest(DatabaseTestCase('test_get_by_view_in_document'))
+	
 	return suite
 
 if __name__ == "__main__":

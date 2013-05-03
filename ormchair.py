@@ -801,12 +801,6 @@ class Database(object):
 	def getUrl(self):
 		return self._database_url
 	
-	def delete(self):
-		r = self._database_session.delete(self._database_url)
-		
-		if r.status_code == 404:
-			raise Exception(r.json())
-	
 	# Add single document
 	def add(self,document):
 		
@@ -856,6 +850,14 @@ class Database(object):
 		else:
 			raise Exception(r.json())
 	
+	# Deletes a single document
+	def delete(self,document):
+		
+		r = self._database_session.delete("%s/%s?rev=%s" % (self._database_url,document._id,document._rev))
+		
+		if r.status_code != 200:
+			
+			raise Exception(r.json())
 	
 	# Bulk doc API used for add/update/delete multiple	
 	def _bulkDocs(self,documents):
@@ -1418,6 +1420,10 @@ class BaseDocument(Schema):
 				document_data[property_name] = getattr(self.__class__,property_name).instanceToDict(self)		
 		
 		return document_data
+	
+	def __eq__(self,other):
+		
+		return self.instanceToDict() == other.instanceToDict()
 	
 	# Has the document been added to the database yet?
 	def hasBeenAdded(self):
