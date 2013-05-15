@@ -1,11 +1,13 @@
 ormchair
 ========
 
-Python CouchDB ORM
+* Ormchair
+Is an ORM for Apache CouchDB, with the following main features: 
+- Support for document linking (many to many)
+- Ability to export the schema as JSON-Schema compatiable json, ideal for frontend validation
+- Create and query views based on a simple index, without the need to create JS views
+- Versioning and tagging of schema changes, so that migrates between versions can be done
 
-Features
-- [x] Basic wrapper around main parts of the Couch REST API
-- [x] Builtin Support for linking documents (many to many), with secondary indexes
-- [x] Export JSON Schema (http://tools.ietf.org/html/draft-zyp-json-schema-03) for frontend validation matching class definitions
-- [] Versioning of classes for data migrations
-- [] Lot's of other stuff
+** LICENSE
+Code is licensed under Apache License 2.0, MIT Licence and NEW BSD License.
+You can choose one of the licences above.

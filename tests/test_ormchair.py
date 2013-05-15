@@ -612,8 +612,6 @@ class DatabaseTestCase(unittest.TestCase):
 					'}'
 				)
 			})
-			
-			get_by_name = ormchair.Index("name")
 				
 		
 		class Person(ormchair.Document):

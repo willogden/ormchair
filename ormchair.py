@@ -936,17 +936,21 @@ class Database(object):
 	def _processViewResponse(self,documents_data,as_json=False):
 		
 		documents = []
-			
+		
 		for row in documents_data["rows"]:
 			
-			if as_json:
+			if as_json and "doc" in row:
 				
 				documents.append(row["doc"])
 				
-			else:
+			elif "doc" in row:
 				
 				documents.append(self._createDocument(row["doc"]))
-							
+			
+			else:
+				
+				documents.append(row)
+				
 		return documents
 	
 	# Get multiple documents
@@ -1178,9 +1182,13 @@ class Database(object):
 		# Response type
 		headers = {"content-type": "application/json"}	
 		
-		# The params on the url
-		params = {"include_docs" : True}
-		for optional_param_arg in ["limit","skip","startkey_docid","endkey_docid","descending"]:
+		# The params on the url (only include docs if not a reduce)
+		if not ("group" in kwargs or "reduce" in kwargs):
+			params = {
+				"include_docs":True
+			}
+			
+		for optional_param_arg in ["limit","skip","startkey_docid","endkey_docid","descending","group","group_level"]:
 			if optional_param_arg in kwargs and kwargs[optional_param_arg]:
 				params[optional_param_arg] = kwargs[optional_param_arg]
 		
@@ -1664,6 +1672,11 @@ class Document(BaseDocument):
 			function_string += "}}"
 
 			schema_design_document.indexes_["map"] = function_string
+		
+		else:
+			
+			# Set to blank function
+			schema_design_document.indexes_["map"] = "function(doc){}"
 		
 		return schema_design_document
 			
