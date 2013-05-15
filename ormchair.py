@@ -1183,10 +1183,9 @@ class Database(object):
 		headers = {"content-type": "application/json"}	
 		
 		# The params on the url (only include docs if not a reduce)
+		params = {}
 		if not ("group" in kwargs or "reduce" in kwargs):
-			params = {
-				"include_docs":True
-			}
+			params["include_docs"] = True
 			
 		for optional_param_arg in ["limit","skip","startkey_docid","endkey_docid","descending","group","group_level"]:
 			if optional_param_arg in kwargs and kwargs[optional_param_arg]:
