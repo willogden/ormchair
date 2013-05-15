@@ -2,7 +2,7 @@ from distutils.core import setup
 
 setup(
 	name='ormchair',
-	version='0.1.1',
+	version='0.1.2',
 	long_description=open('README.md').read(),
 	author='Will Ogden',
 	url='https://github.com/willogden/ormchair',
