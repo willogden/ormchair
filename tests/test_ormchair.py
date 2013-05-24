@@ -4,6 +4,7 @@ Created on 19 Apr 2013
 @author: Will Ogden
 '''
 import unittest
+import sys
 import ormchair
 
 class SchemaTestCase(unittest.TestCase):
@@ -442,13 +443,13 @@ class EmbeddedLinkPropertyTestCase(unittest.TestCase):
 	
 	def setUp(self):
 		
-		class TestSchemaA(ormchair.BaseDocument):
+		class TestSchemaA(ormchair.Document):
 			string_property_1 = ormchair.StringProperty()
 		
 		schema_instance_a = TestSchemaA()
 		schema_instance_a._id = "Test ID"
 		
-		class TestSchemaB(ormchair.BaseDocument):
+		class TestSchemaB(ormchair.Document):
 			embeddeded_link_property_1 = ormchair.EmbeddedLinkProperty(
 				TestSchemaA,
 				required=True
@@ -509,10 +510,10 @@ class LinkPropertyTestCase(unittest.TestCase):
 	
 	def setUp(self):
 		
-		class TestSchemaA(ormchair.BaseDocument):
+		class TestSchemaA(ormchair.Document):
 			pass
 		
-		class TestSchemaB(ormchair.BaseDocument):
+		class TestSchemaB(ormchair.Document):
 			link_property_to_a = ormchair.LinkProperty(TestSchemaA,reverse="link_property_to_b")
 
 		self.schema_class_a = TestSchemaA
@@ -955,5 +956,12 @@ def suite():
 
 if __name__ == "__main__":
 	
+	try:
+		del sys.modules['ormchair']
+	except Exception:
+		pass
+	import ormchair
+	
 	#import sys;sys.argv = ['', 'Test.testName']
 	unittest.main(defaultTest='suite')
+	

@@ -1,0 +1,243 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>Document and Schema Properties &mdash; ormchair 0.1.2 documentation</title>
+    
+    <link rel="stylesheet" href="_static/default.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    './',
+        VERSION:     '0.1.2',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <link rel="top" title="ormchair 0.1.2 documentation" href="index.html" /> 
+  </head>
+  <body>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li><a href="index.html">ormchair 0.1.2 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <div class="section" id="document-and-schema-properties">
+<h1>Document and Schema Properties<a class="headerlink" href="#document-and-schema-properties" title="Permalink to this headline">¶</a></h1>
+<dl class="class">
+<dt id="ormchair.Document">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">Document</tt><big>(</big><em>document_data=None</em><big>)</big><a class="headerlink" href="#ormchair.Document" title="Permalink to this definition">¶</a></dt>
+<dd><p>Base class that your model classes should extend</p>
+<dl class="method">
+<dt id="ormchair.Document.instanceToDict">
+<tt class="descname">instanceToDict</tt><big>(</big><big>)</big><a class="headerlink" href="#ormchair.Document.instanceToDict" title="Permalink to this definition">¶</a></dt>
+<dd><p>Convert the document class object to a dict</p>
+</dd></dl>
+
+<dl class="classmethod">
+<dt id="ormchair.Document.schemaToDict">
+<em class="property">classmethod </em><tt class="descname">schemaToDict</tt><big>(</big><big>)</big><a class="headerlink" href="#ormchair.Document.schemaToDict" title="Permalink to this definition">¶</a></dt>
+<dd><p>Export the class schema as a JSON-Schema compatible dict</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.StringProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">StringProperty</tt><big>(</big><em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.StringProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>A string property of a class</p>
+<dl class="docutils">
+<dt>Kwargs:</dt>
+<dd>default (str): Default value
+required (bool): Is this a required (compulsory) property
+min_length (int): The minimum value length
+max_length (int): The maximum value length</dd>
+</dl>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.NumberProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">NumberProperty</tt><big>(</big><em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.NumberProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>A number property of a class</p>
+<p>Kwargs:
+default (float): Default value
+required (bool): Is this a required (compulsory) property</p>
+<blockquote>
+<div>minimum (float): The minimum value
+maximum (float): The maximum value</div></blockquote>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.IntegerProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">IntegerProperty</tt><big>(</big><em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.IntegerProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>An integer property of a class</p>
+<p>Kwargs:
+default (int): Default value
+required (bool): Is this a required (compulsory) property</p>
+<blockquote>
+<div>minimum (int): The minimum value
+maximum (int): The maximum value</div></blockquote>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.BooleanProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">BooleanProperty</tt><big>(</big><em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.BooleanProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>A boolean property of a class</p>
+<dl class="docutils">
+<dt>Kwargs:</dt>
+<dd>default (bool): Default value
+required (bool): Is this a required (compulsory) property</dd>
+</dl>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.DictProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">DictProperty</tt><big>(</big><em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.DictProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>Allows for composite properties</p>
+<dl class="docutils">
+<dt>Kwargs:</dt>
+<dd>default (dict): Default value
+required (bool): Is this a required (compulsory) property</dd>
+</dl>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.ListProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">ListProperty</tt><big>(</big><em>property_instance</em>, <em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.ListProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>Represents a list property</p>
+<dl class="docutils">
+<dt>Args:</dt>
+<dd>property_instance (Property): The list item property e.g. each item in the list is an instance of this</dd>
+<dt>Kwargs:</dt>
+<dd>default (list): Default value
+required (bool): Is this a required (compulsory) property</dd>
+</dl>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.EmbeddedLinkProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">EmbeddedLinkProperty</tt><big>(</big><em>linked_class</em>, <em>**kwargs</em><big>)</big><a class="headerlink" href="#ormchair.EmbeddedLinkProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>Represents an embedded link to another document</p>
+<dl class="docutils">
+<dt>Args:</dt>
+<dd>linked_class (Document class): The Document class to create a link to</dd>
+<dt>Kwargs:</dt>
+<dd>default (Document): Default value
+required (bool): Is this a required (compulsory) property</dd>
+</dl>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.LinkProperty">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">LinkProperty</tt><big>(</big><em>linked_class</em>, <em>reverse=None</em><big>)</big><a class="headerlink" href="#ormchair.LinkProperty" title="Permalink to this definition">¶</a></dt>
+<dd><p>Property to link to other schemas</p>
+<dl class="docutils">
+<dt>Args:</dt>
+<dd>linked_class (Document class): The Document class to create a link to
+reverse (str): The name of the reverse property that will be created on the linked class e.g. the side of the relationship</dd>
+</dl>
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.Index">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">Index</tt><big>(</big><em>*args</em><big>)</big><a class="headerlink" href="#ormchair.Index" title="Permalink to this definition">¶</a></dt>
+<dd><p>Used to create a view that allows documents to queried by properties of the class</p>
+</dd></dl>
+
+</div>
+<div class="section" id="design-document-and-view">
+<h1>Design Document and View<a class="headerlink" href="#design-document-and-view" title="Permalink to this headline">¶</a></h1>
+<dl class="class">
+<dt id="ormchair.DesignDocument">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">DesignDocument</tt><big>(</big><em>document_data=None</em><big>)</big><a class="headerlink" href="#ormchair.DesignDocument" title="Permalink to this definition">¶</a></dt>
+<dd><p>Base class that design document classes should extend</p>
+<dl class="classmethod">
+<dt id="ormchair.DesignDocument.schemaToDict">
+<em class="property">classmethod </em><tt class="descname">schemaToDict</tt><big>(</big><big>)</big><a class="headerlink" href="#ormchair.DesignDocument.schemaToDict" title="Permalink to this definition">¶</a></dt>
+<dd><p>Export the class schema as a JSON-Schema compatible dict</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="ormchair.View">
+<em class="property">class </em><tt class="descclassname">ormchair.</tt><tt class="descname">View</tt><big>(</big><em>default_value=None</em><big>)</big><a class="headerlink" href="#ormchair.View" title="Permalink to this definition">¶</a></dt>
+<dd><p>Represents a view</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="ormchair._id">
+<tt class="descclassname">ormchair.</tt><tt class="descname">_id</tt><big>(</big><em>id</em><big>)</big><a class="headerlink" href="#ormchair._id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Decorator to set fixed id for a document class e.g. singleton documents. Decorated design document classes will be synced automatically when Database.sync() is called.</p>
+</dd></dl>
+
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">Document and Schema Properties</a></li>
+<li><a class="reference internal" href="#design-document-and-view">Design Document and View</a></li>
+</ul>
+
+  <h3>This Page</h3>
+  <ul class="this-page-menu">
+    <li><a href="_sources/ormchair.txt"
+           rel="nofollow">Show Source</a></li>
+  </ul>
+<div id="searchbox" style="display: none">
+  <h3>Quick search</h3>
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li><a href="index.html">ormchair 0.1.2 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer">
+        &copy; Copyright 2013, Will Ogden.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.2b1.
+    </div>
+  </body>
+</html>

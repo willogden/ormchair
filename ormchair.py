@@ -1,7 +1,9 @@
 '''
+ormchair - a Python ORM for CouchDB
+
 Created on 24 Jan 2013
 
-@author: will
+@author: Will Ogden
 '''
 import requests
 from requests.auth import HTTPBasicAuth
@@ -9,30 +11,28 @@ import uuid
 import json
 import copy
 
-
-
-"""
-Used for schema validation errors
-"""
 class ValidationError(Exception):
+	"""
+	Used for schema validation errors
+	"""
 	def __init__(self, message):
 		Exception.__init__(self, message)
 
-"""
-Used for document conflict errors
-"""
+
 class ConflictError(Exception):
+	"""
+	Used for document conflict errors
+	"""
 	def __init__(self, message):
 		Exception.__init__(self, message)
 
 
-"""
-Represents an abstract property of a class
-"""
 class Property(object):
-	
+	"""
+	Represents an abstract property of a class
+	"""
 	# Stores the actual value of the property
-	def __init__(self,*args,**kwargs):
+	def __init__(self,**kwargs):
 		
 		self._name = None
 		self._required = kwargs.pop('required', None)
@@ -102,11 +102,11 @@ class Property(object):
 			return None
 		
 	
-""" 
-Metaclass to set the name on the descriptor property objects
-"""
+
 class SchemaMetaClass(type):
-	
+	""" 
+	Metaclass to set the name on the descriptor property objects
+	"""
 	def __new__(cls, classname, bases, classDict):
 		
 		# Store a static variable of the property names
@@ -131,11 +131,11 @@ class SchemaMetaClass(type):
 		
 		return schema_class
 
-"""
-Mapped to a class
-"""
+
 class Schema(object):
-	
+	"""
+	Mapped to a class
+	"""
 	# Set the name on all the descriptors within this class
 	__metaclass__ = SchemaMetaClass
 	
@@ -193,9 +193,9 @@ class Schema(object):
 		
 		return self._root_instance
 	
-	# Export the class schema as a dict
 	@classmethod
 	def schemaToDict(cls):
+		""" Export the class schema as a JSON-Schema compatible dict """
 		
 		schema_dict = {
 			"type" : "object",
@@ -228,13 +228,20 @@ class Schema(object):
 		return schema_dict
 	
 
-"""
-A string property of a class
-"""
+
 class StringProperty(Property):
-	
-	def __init__(self,*args,**kwargs):
-		
+	"""
+	A string property of a class
+	"""
+	def __init__(self,**kwargs):
+		"""
+        Kwargs:
+        	default (str): Default value
+        	required (bool): Is this a required (compulsory) property
+           	min_length (int): The minimum value length
+           	max_length (int): The maximum value length
+
+        """
 		self._min_length = kwargs.pop('min_length', None)
 		self._max_length = kwargs.pop('max_length', None)
 		
@@ -242,7 +249,7 @@ class StringProperty(Property):
 		self._format = kwargs.pop('format', None)
 		self._pattern = kwargs.pop('pattern', None)
 		
-		super(StringProperty, self).__init__(self,*args,**kwargs)
+		super(StringProperty, self).__init__(**kwargs)
 		
 	
 	# Override	
@@ -276,12 +283,16 @@ class StringProperty(Property):
 			
 		return schema_dict
 
-"""
-A number property of a class
-"""
+
 class NumberProperty(Property):
-	
-	def __init__(self,*args,**kwargs):
+	"""
+	A number property of a class
+	"""
+	def __init__(self,**kwargs):
+		"""
+		Kwargs:
+        	
+		"""
 		
 		self._minimum = kwargs.pop('minimum', None)
 		self._maximum = kwargs.pop('maximum', None)
@@ -290,7 +301,7 @@ class NumberProperty(Property):
 		self.format =kwargs.pop('format', None)
 		self.divisible_by = kwargs.pop('divisible_by', None)
 		
-		super(NumberProperty, self).__init__(self,*args,**kwargs)
+		super(NumberProperty, self).__init__(**kwargs)
 		
 	# Override	
 	def _validate(self,value):
@@ -325,13 +336,20 @@ class NumberProperty(Property):
 		return schema_dict
 			
 
-"""
-An integer property of a class
-"""
+
 class IntegerProperty(NumberProperty):
-	
-	def __init__(self,*args,**kwargs):
-		super(IntegerProperty, self).__init__(self,*args,**kwargs)
+	"""
+	An integer property of a class
+	"""
+	def __init__(self,**kwargs):
+		"""
+		Kwargs:
+        	default (int): Default value
+        	required (bool): Is this a required (compulsory) property
+			minimum (int): The minimum value
+			maximum (int): The maximum value
+		"""
+		super(IntegerProperty, self).__init__(**kwargs)
 	
 	# Override	
 	def _validate(self,value):
@@ -350,17 +368,21 @@ class IntegerProperty(NumberProperty):
 		return schema_dict
 	
 
-"""
-A boolean property of a class
-"""
+
 class BooleanProperty(Property):
-	
-	def __init__(self,*args,**kwargs):
-		
+	"""
+	A boolean property of a class
+	"""
+	def __init__(self,**kwargs):
+		"""
+        Kwargs:
+        	default (bool): Default value
+        	required (bool): Is this a required (compulsory) property
+        """
 		# Not implemented
 		self._format = kwargs.pop('format', None)
 		
-		super(BooleanProperty, self).__init__(self,*args,**kwargs)
+		super(BooleanProperty, self).__init__(**kwargs)
 		
 	
 	# Override	
@@ -379,14 +401,18 @@ class BooleanProperty(Property):
 		return schema_dict
 
 
-"""
-Allows for composite properties
-"""
+
 class DictProperty(Property):
-	
-	def __init__(self,*args,**kwargs):
-		
-		super(DictProperty, self).__init__(self,*args,**kwargs)
+	"""
+	Allows for composite properties
+	"""
+	def __init__(self,**kwargs):
+		"""
+        Kwargs:
+        	default (dict): Default value
+        	required (bool): Is this a required (compulsory) property
+        """
+		super(DictProperty, self).__init__(**kwargs)
 		
 		# Create a new subclass of Schema
 		kwargs["_is_root"] = False
@@ -528,14 +554,21 @@ class DictPropertyList(list):
 	__setitem__ = wrap(list.__setitem__)
 	__setslice__ = wrap(list.__setslice__,takes_list=True)		
 
-""" 
-Special property that represents an list property
-"""
+
 class ListProperty(Property):
-	
-	def __init__(self,property_instance,*args,**kwargs):
-		
-		super(ListProperty, self).__init__(self,*args,**kwargs)
+	""" 
+	Represents a list property
+	"""
+	def __init__(self,property_instance,**kwargs):
+		"""
+        Args:
+        	property_instance (Property): The list item property e.g. each item in the list is an instance of this
+        
+        Kwargs:
+        	default (list): Default value
+        	required (bool): Is this a required (compulsory) property
+        """
+		super(ListProperty, self).__init__(**kwargs)
 		
 		# Create a new subclass of Schema based on passed in property instance
 		kwargs = {"_is_root" : False, "_property" : property_instance}
@@ -591,13 +624,17 @@ class ListProperty(Property):
 		}
 
 
-"""
-Property to link to other schemas
-"""
+
 class LinkProperty(Property):
-	
+	"""
+	Property to link to other schemas
+	"""
 	def __init__(self,linked_class,reverse=None):
-		
+		"""
+        Args:
+			linked_class (Document class): The Document class to create a link to
+			reverse (str): The name of the reverse property that will be created on the linked class e.g. the side of the relationship
+        """
 		self._linked_class = linked_class
 		self._reverse = reverse
 		
@@ -652,20 +689,28 @@ class EmbeddedLink():
 		self._document = None
 		self._inflated = False
 
-"""
-Allows for composite properties
-"""
+
 class EmbeddedLinkProperty(Property):
-	
+	"""
+	Represents an embedded link to another document
+	"""
 	def __init__(self,linked_class,**kwargs):
+		"""
+        Args:
+			linked_class (Document class): The Document class to create a link to
+			
+        Kwargs:
+			default (Document): Default value
+			required (bool): Is this a required (compulsory) property
+		"""
 		
 		self._linked_class = linked_class
 		
 		# Check the linked class is a subclass of basedocument
-		if not issubclass(self._linked_class,BaseDocument):
-			raise ValidationError("Linked class must be a subclass of BaseDocument")
+		if not issubclass(self._linked_class,Document):
+			raise ValidationError("Linked class must be a subclass of Document")
 		
-		super(EmbeddedLinkProperty, self).__init__(self,**kwargs)
+		super(EmbeddedLinkProperty, self).__init__(**kwargs)
 	
 	def __get__(self, instance, owner):
 		
@@ -724,13 +769,10 @@ class EmbeddedLinkProperty(Property):
 		return schema_dict
 		
 
-
-	
-"""
-A couchdb server session
-"""
 class Session(object):
-	
+	"""
+	A couchdb server session
+	"""
 	def __init__(self,url,username=None,password=None):
 		
 		# Url of the couchdb server
@@ -788,11 +830,11 @@ class Session(object):
 		if r.status_code != 200:
 			raise Exception(r.json())
 
-"""
-Represents a couchdb database
-"""
+
 class Database(object):
-	
+	"""
+	Represents a couchdb database
+	"""
 	def __init__(self,database_url,database_session, info = None):
 		self._database_url = database_url
 		self._info = info
@@ -1224,11 +1266,11 @@ class Database(object):
 		return self.getByView(view_name="indexes_", design_document_id=document_class.getSchemaDesignDocumentId(),**kwargs)
 	
 		
-"""
-Used to create a view that allows documents to queried using a map function
-"""
+
 class Index(object):
-	
+	"""
+	Used to create a view that allows documents to queried by properties of the class
+	"""
 	# args is a list of paths e.g. "address.address_1","name"
 	def __init__(self,*args):
 		self._property_paths = tuple(["doc." + property_path for property_path in args])
@@ -1254,11 +1296,11 @@ class Index(object):
 		
 		return emit_string % emit_keys
 
-"""
-Represents a view
-"""
+
 class View(object):
-	
+	"""
+	Represents a view
+	"""
 	# Stores the actual value of the property
 	def __init__(self,default_value=None):
 		
@@ -1325,20 +1367,21 @@ class View(object):
 		return True
 
 
-"""
-Wrapper to set fixed id for a document class e.g. singleton documents
-"""
+
 def _id(id):
+	"""
+	Decorator to set fixed id for a document class e.g. singleton documents. Decorated design document classes will be synced automatically when Database.sync() is called.
+	"""
 	def decorator(document_class):
 		document_class._fixed_id = id
 		return document_class
 	return decorator
 
-""" 
-Metaclass for basedocument
-"""
+
 class BaseDocumentMetaClass(SchemaMetaClass):
-	
+	""" 
+	Metaclass for basedocument
+	"""
 	def __new__(cls, classname, bases, classDict):
 
 		# Create the new document class
@@ -1376,11 +1419,11 @@ class BaseDocumentMetaClass(SchemaMetaClass):
 		return base_document_class
 
 
-"""
-The base document class
-"""
+
 class BaseDocument(Schema):
-	
+	"""
+	The base class that represents a schema bound document within couchdb
+	"""
 	__metaclass__ = BaseDocumentMetaClass
 	
 	# Static to store a mapping between type and class
@@ -1391,27 +1434,29 @@ class BaseDocument(Schema):
 	_rev = StringProperty(required=True)
 	type_ = StringProperty(required=True)
 	
-	def __init__(self,_id=None,document_data=None):
+	def __init__(self,document_data=None):
 		
 		super(BaseDocument,self).__init__()
+		
+		# Set the classname as the type if not got a default set
+		self.type_ = self.__class__.__name__.lower()
 		
 		# See if data passed in
 		if document_data == None:
 			
 			# Set id if not passed in
-			self._id = _id if _id else uuid.uuid1().hex
-			
-			# Set the classname as the type if not got a default set
-			self.type_ = self.type_ if self.type_ else self.__class__.__name__.lower()
-			
+			self._id = uuid.uuid1().hex
+	
 		else:
+			
 			self.instanceFromDict(document_data)
 			
 		# Store special flag for deletion
 		self._marked_for_delete = False
 	
-	# Get the document as dict
+	
 	def instanceToDict(self):
+		""" Convert the document class object to a dict """
 		
 		# Empty dict
 		document_data = {}
@@ -1443,59 +1488,22 @@ class BaseDocument(Schema):
 		self._marked_for_delete = marked_for_delete
 
 
-""" 
-Metaclass to for design documents
-"""
-class DesignDocumentMetaClass(BaseDocumentMetaClass):
-	
-	def __new__(cls, classname, bases, classDict):
-		
-		# Create the new document class
-		design_document_class = BaseDocumentMetaClass.__new__(cls, classname, bases, classDict)
-		
-		# Extend statics
-		_views = []
-		for base in bases:
-			if hasattr(base,"_views"):
-				_views.extend(base._views)
-		
-		# Iterate through the new class' __dict__ and update all recognised index names
-		for name, attr in classDict.iteritems():
-			
-			if isinstance(attr, View):
-				
-				# Store the name of the index in the descriptor
-				attr.setName(name)
-				
-				# Store the parent class in the property
-				attr.setParent(design_document_class)
-				
-				# Append the name of the index to class var
-				_views.append(name)
-		
-		# Set class property
-		design_document_class._views = _views
-
-		return design_document_class
-
-
-"""
-A design document
-"""
 class DesignDocument(BaseDocument):
+	"""
+	Base class that design document classes should extend
+	"""
 
-	#__metaclass__ = DesignDocumentMetaClass
-	
-	def __init__(self,_id=None,document_data=None):
+	def __init__(self,document_data=None):
 		
 		# Used to store actual values of views (can't store in descriptor objects as they are static)
 		self._view_values = {}
 		
-		# Use fixed id if set
-		_id = self._fixed_id if hasattr(self,"_fixed_id") else _id
-
-		super(DesignDocument,self).__init__(_id=_id,document_data=document_data)
+		super(DesignDocument,self).__init__(document_data=document_data)
 		
+		# Use fixed id if set
+		if hasattr(self,"_fixed_id"):
+			self._id = self._fixed_id
+	
 	# Overridden to deal with views
 	def instanceToDict(self):
 		
@@ -1603,10 +1611,11 @@ class DocumentMetaClass(BaseDocumentMetaClass):
 		return document_class
 
 
-"""
-The main class to extend. Represents a couchdb schema bound document
-"""
+
 class Document(BaseDocument):
+	"""
+	Base class that your model classes should extend
+	"""
 	
 	__metaclass__ = DocumentMetaClass
 	
@@ -1616,9 +1625,9 @@ class Document(BaseDocument):
 	# Used to keep track of which schema version created this
 	schema_version_ = NumberProperty(required=True)
 	
-	def __init__(self,_id=None,document_data=None):
+	def __init__(self,document_data=None):
 		
-		super(Document,self).__init__(_id=_id,document_data=document_data)
+		super(Document,self).__init__(document_data=document_data)
 		
 		# See if data passed in
 		if document_data == None:
@@ -1652,7 +1661,8 @@ class Document(BaseDocument):
 	def getSchemaDesignDocument(cls):
 		
 		# Create an instance of the schema document
-		schema_design_document = cls._schema_design_document_class(_id=cls.getSchemaDesignDocumentId())
+		schema_design_document = cls._schema_design_document_class()
+		schema_design_document._id = cls.getSchemaDesignDocumentId()
 		
 		# Set the schema
 		schema_design_document.schema = json.dumps(cls.schemaToDict())
