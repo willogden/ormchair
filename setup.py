@@ -2,8 +2,8 @@ from distutils.core import setup
 
 setup(
 	name='ormchair',
-	version='0.1.3',
-	long_description=open('README.md').read(),
+	version='0.1.4',
+	long_description=open('README').read(),
 	author='Will Ogden',
 	url='https://github.com/willogden/ormchair',
 	py_modules=['ormchair'],
