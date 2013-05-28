@@ -855,8 +855,9 @@ class DatabaseTestCase(unittest.TestCase):
 		
 		self.test_ormchair_db.addMultiple([person1,person2])
 		
-		queried_persons = self.test_ormchair_db.getByIndex(self.person_class.get_by_name,key=["Tom"])
+		queried_persons = self.test_ormchair_db.getByIndex(self.person_class.get_by_name,key="Tom")
 		
+		self.assertEqual(len(queried_persons), 1)
 		self.assertIn(person2,queried_persons)
 		
 	def test_get_by_view(self):

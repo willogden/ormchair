@@ -1229,13 +1229,13 @@ class Database(object):
 		if not ("group" in kwargs or "reduce" in kwargs):
 			params["include_docs"] = True
 			
-		for optional_param_arg in ["limit","skip","startkey_docid","endkey_docid","descending","group","group_level"]:
+		for optional_param_arg in ["key","limit","skip","startkey_docid","endkey_docid","descending","group","group_level"]:
 			if optional_param_arg in kwargs and kwargs[optional_param_arg]:
-				params[optional_param_arg] = kwargs[optional_param_arg]
+				params[optional_param_arg] = json.dumps(kwargs[optional_param_arg])
 		
 		# The data in the post body
 		data = {}
-		for optional_data_arg in ["key","keys","startkey","endkey"]:
+		for optional_data_arg in ["keys","startkey","endkey"]:
 			if optional_data_arg in kwargs and kwargs[optional_data_arg]:
 				data[optional_data_arg] = '"%s"' % (kwargs[optional_data_arg])
 				
@@ -1251,16 +1251,19 @@ class Database(object):
 			raise Exception(r.json())
 	
 	# Gets the documents by index
-	def getByIndex(self,index_property,**kwargs): #key,start_key=None,limit=None
+	def getByIndex(self,index_property,**kwargs):
 		
 		# Get the parent document class from the property
 		document_class = index_property.getParent()
 		
 		# Must prefix the passed in key with the indexes name
 		for key_arg in ["key","keys","startkey","endkey"]:
+			
+			# If key, startkey or endkey then put into a list
 			if key_arg in kwargs and not isinstance(kwargs[key_arg],list):
-				raise Exception("Keys must be a list object")
-			elif key_arg in kwargs:
+				kwargs[key_arg] = [kwargs[key_arg]]
+				
+			if key_arg in kwargs:
 				kwargs[key_arg].insert(0,index_property.getName())
 			
 		return self.getByView(view_name="indexes_", design_document_id=document_class.getSchemaDesignDocumentId(),**kwargs)
