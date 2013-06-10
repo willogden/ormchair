@@ -1237,17 +1237,17 @@ class Database(object):
 		data = {}
 		for optional_data_arg in ["keys","startkey","endkey"]:
 			if optional_data_arg in kwargs and kwargs[optional_data_arg]:
-				data[optional_data_arg] = '"%s"' % (kwargs[optional_data_arg])
+				data[optional_data_arg] = kwargs[optional_data_arg]
 				
 		# Do the post
 		r = self._database_session.post(url, headers=headers,params=params, data=json.dumps(data))
-		
+	
 		if r.status_code == 200:
 			
 			return self._processViewResponse(r.json())
 		
 		else:
-			
+
 			raise Exception(r.json())
 	
 	# Gets the documents by index
@@ -1256,8 +1256,18 @@ class Database(object):
 		# Get the parent document class from the property
 		document_class = index_property.getParent()
 		
-		# Must prefix the passed in key with the indexes name
-		for key_arg in ["key","keys","startkey","endkey"]:
+		# Must prefix the passed in key with the indexes name (multiple values)
+		if "keys" in kwargs:
+			new_keys = []
+			for key in kwargs["keys"]:
+				if not isinstance(key,list):
+					key = [key]
+				key.insert(0,index_property.getName())
+				new_keys.append(key)
+			kwargs["keys"] = new_keys
+			
+		# Must prefix the passed in key with the indexes name (single value)
+		for key_arg in ["key","startkey","endkey"]:
 			
 			# If key, startkey or endkey then put into a list
 			if key_arg in kwargs and not isinstance(kwargs[key_arg],list):
