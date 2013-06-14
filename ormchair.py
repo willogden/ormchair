@@ -1129,23 +1129,23 @@ class Database(object):
 				try:
 					
 					# Try and get
-					saved_schema_design_document = self.get(document_class.getSchemaDesignDocumentId())
+					saved_schema_design_document = self.get(document_class.getSchemaDesignDocumentId(),as_json=True)
 					
 					# Got this far so must compare to see if it needs updating
 					current_schema_design_document = document_class.getSchemaDesignDocument()
 					
 					# Set the _rev and version properties so like for like comparison
-					current_schema_design_document._rev = saved_schema_design_document._rev
-					current_schema_design_document.version = saved_schema_design_document.version
+					current_schema_design_document._rev = saved_schema_design_document["_rev"]
+					current_schema_design_document.version = saved_schema_design_document["version"]
 					
 					update = False
 					
 					# Compare saved schema to see if need to update version
-					if current_schema_design_document.schema != saved_schema_design_document.schema:
-						current_schema_design_document.version = saved_schema_design_document.version + 1
+					if current_schema_design_document.schema != saved_schema_design_document["schema"]:
+						current_schema_design_document.version = saved_schema_design_document["version"] + 1
 						update = True
 					# See if more views/indexes have been added (e.g. not affecting the schema version)
-					elif json.dumps(current_schema_design_document.instanceToDict()) != json.dumps(saved_schema_design_document.instanceToDict()):
+					elif json.dumps(current_schema_design_document.instanceToDict()) != saved_schema_design_document:
 						update = True
 					
 					if update:
@@ -1544,7 +1544,7 @@ class DesignDocument(BaseDocument):
 					setattr(self,view_name,dict_data["views"][view_name])
 				
 				elif "views" in dict_data and view_name not in dict_data["views"]: 
-					
+
 					raise ValidationError("View %s is required but not present" % view_name)
 			
 			# Remove from dict for validation for extraneous properties
