@@ -1145,7 +1145,7 @@ class Database(object):
 						current_schema_design_document.version = saved_schema_design_document["version"] + 1
 						update = True
 					# See if more views/indexes have been added (e.g. not affecting the schema version)
-					elif json.dumps(current_schema_design_document.instanceToDict()) != saved_schema_design_document:
+					elif json.dumps(current_schema_design_document.instanceToDict()) != json.dumps(saved_schema_design_document):
 						update = True
 					
 					if update:
