@@ -1144,12 +1144,15 @@ class Database(object):
 					if current_schema_design_document.schema != saved_schema_design_document["schema"]:
 						current_schema_design_document.version = saved_schema_design_document["version"] + 1
 						update = True
+						
 					# See if more views/indexes have been added (e.g. not affecting the schema version)
 					elif json.dumps(current_schema_design_document.instanceToDict()) != json.dumps(saved_schema_design_document):
 						update = True
 					
 					if update:
 						saved_schema_design_document = self.update(current_schema_design_document)
+					else:
+						saved_schema_design_document = current_schema_design_document
 	
 				# Add
 				except Exception as e:
