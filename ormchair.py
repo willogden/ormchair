@@ -975,7 +975,7 @@ class Database(object):
 			
 	
 	# Pass a json response from a view query and inflates documents
-	def _processViewResponse(self,documents_data,as_json=False):
+	def _processViewResponse(self,documents_data,as_json=False,**kwargs):
 		
 		documents = []
 		
@@ -1229,7 +1229,7 @@ class Database(object):
 		
 		# The params on the url (only include docs if not a reduce)
 		params = {}
-		if not ("group" in kwargs or "reduce" in kwargs):
+		if not ("group" in kwargs or "reduce" in kwargs or "include_docs" in kwargs):
 			params["include_docs"] = True
 			
 		for optional_param_arg in ["key","limit","skip","startkey_docid","endkey_docid","descending","group","group_level"]:
@@ -1247,7 +1247,7 @@ class Database(object):
 	
 		if r.status_code == 200:
 			
-			return self._processViewResponse(r.json())
+			return self._processViewResponse(r.json(),**kwargs)
 		
 		else:
 
