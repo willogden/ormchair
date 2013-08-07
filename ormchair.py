@@ -10,6 +10,8 @@ from requests.auth import HTTPBasicAuth
 import uuid
 import json
 import copy
+import threading
+import weakref
 
 class ValidationError(Exception):
 	"""
@@ -26,6 +28,12 @@ class ConflictError(Exception):
 	def __init__(self, message):
 		Exception.__init__(self, message)
 
+class PropertyPathNotFoundError(Exception):
+	"""
+	Used for property paths not found errors
+	"""
+	def __init__(self, message):
+		Exception.__init__(self, message)
 
 class Property(object):
 	"""
@@ -227,6 +235,21 @@ class Schema(object):
 		
 		return schema_dict
 	
+	def getPropertyValueByPath(self,property_path):
+		""" Returns the value of schema property by string path e.g. dict_prop1.dict_prop2.etc """
+		
+		property_path_list = property_path.split(".")
+		property_name = property_path_list.pop(0)
+
+		schema_property = getattr(self,property_name,None)
+		
+		if schema_property != None and not issubclass(schema_property.__class__,Schema):
+			return (True,schema_property)
+		elif len(property_path_list) > 0:
+			return schema_property.getPropertyValueByPath(".".join(property_path_list))
+		else:
+			return (False,None)
+			#raise PropertyPathNotFoundError("Property path " + property_path + " not found")
 
 
 class StringProperty(Property):
@@ -629,21 +652,29 @@ class LinkProperty(Property):
 	"""
 	Property to link to other schemas
 	"""
-	def __init__(self,linked_class,reverse=None):
+	def __init__(self,linked_class,reverse=None,index_property_paths=None,reverse_index_property_paths=None):
 		"""
         Args:
 			linked_class (Document class): The Document class to create a link to
 			reverse (str): The name of the reverse property that will be created on the linked class e.g. the side of the relationship
+        	index_property_paths (list): A list of index property paths of the linked class e.g. ["property_1","property_2"]
+        	reverse_index_property_paths (list): A list of reverse index property paths of the linked class e.g. ["property_1","property_2"]
+        	
         """
 		self._linked_class = linked_class
 		self._reverse = reverse
+		self._index_property_paths = index_property_paths if index_property_paths else []
+		self._reverse_index_property_paths = reverse_index_property_paths if reverse_index_property_paths else []
 		
 		super(LinkProperty,self).__init__()
 		
 		# Add a reverse relation
 		if self._reverse and not hasattr(self._linked_class,self._reverse):
 			
-			setattr(self._linked_class,self._reverse,LinkProperty(self.__class__,reverse=self._name))
+			reverse_link_property = LinkProperty(self.__class__,reverse=self._name,index_property_paths=self._reverse_index_property_paths,reverse_index_property_paths=self._index_property_paths)
+			reverse_link_property.setName(self._reverse)
+			self._linked_class._links.append(self._reverse)
+			setattr(self._linked_class,self._reverse,reverse_link_property)
 		
 	def __get__(self, instance, owner):
 		
@@ -666,7 +697,19 @@ class LinkProperty(Property):
 	def getReverse(self):
 		
 		return self._reverse
+
+	def getIndexPropertyPaths(self):
+
+		return self._index_property_paths
 	
+	def getReverseIndexPropertyPaths(self):
+
+		return self._reverse_index_property_paths
+
+	def hasIndexes(self):
+
+		return len(self.getIndexPropertyPaths()) > 0 or len(self.getReverseIndexPropertyPaths()) > 0
+
 	# Override
 	def schemaToDict(self):
 		
@@ -767,16 +810,52 @@ class EmbeddedLinkProperty(Property):
 		]
 		
 		return schema_dict
+
+class BasicLock(object):
+	"""
+	A basic single process only lock for single threaded access to particular documents
+	"""
+	main_lock = threading.RLock()
+	document_locks = weakref.WeakValueDictionary()
+	
+	def __init__(self,document_ids):
+		self._document_ids = sorted(document_ids)
+		self._document_locks = None
 		
+	def __enter__(self):
+		
+		# Aquire main lock whilst checking if per document locks exist
+		with BasicLock.main_lock:
+			self._document_locks = [BasicLock.document_locks.setdefault(document_id, threading.RLock()) for document_id in self._document_ids]
+		
+		# Now try and aquire locks (done in a sorted way to avoid deadlocks)
+		for document_lock in self._document_locks:
+			document_lock.acquire()
+	
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		
+		# Release lock (in reverse order to aquire)
+		for document_lock in reversed(self._document_locks):
+			document_lock.release()
+		
+		if exc_type is not None:
+			# Exception occurred
+			return False # Will raise the exception
+		
+		# All Ok
+		return True
 
 class Session(object):
 	"""
 	A couchdb server session
 	"""
-	def __init__(self,url,username=None,password=None):
+	def __init__(self,url,username=None,password=None,Lock=BasicLock):
 		
 		# Url of the couchdb server
 		self._url = url
+		
+		# The lock class
+		self._Lock = Lock
 		
 		# Create a session to deal with subsequent requests
 		self._database_session = requests.Session()
@@ -798,7 +877,7 @@ class Session(object):
 		r = self._database_session.put(database_url)
 		
 		if r.status_code == 201:
-			return Database(database_url,self._database_session)
+			return Database(database_url,self._database_session, self._Lock)
 		else:
 			raise Exception(r.json())
 		
@@ -808,7 +887,7 @@ class Session(object):
 		r = self._database_session.get(database_url)
 		
 		if r.status_code == 200:
-			return Database(database_url, self._database_session, info=r.json())
+			return Database(database_url, self._database_session, self._Lock, info=r.json())
 		else:
 			raise Exception(r.json())
 	
@@ -835,10 +914,11 @@ class Database(object):
 	"""
 	Represents a couchdb database
 	"""
-	def __init__(self,database_url,database_session, info = None):
+	def __init__(self,database_url,database_session, Lock, info = None):
 		self._database_url = database_url
-		self._info = info
 		self._database_session = database_session
+		self._Lock = Lock
+		self._info = info
 		
 	def getUrl(self):
 		return self._database_url
@@ -860,16 +940,24 @@ class Database(object):
 	# Updates a document
 	def update(self,document):
 		
-		data = json.dumps(document.instanceToDict())
-		
-		r = self._database_session.put("%s/%s" % (self._database_url,document._id),data=data)
-		
-		if r.status_code == 201:
-			document._rev = r.json()["rev"]
-		else:
-			raise Exception(r.json())
-		
-		return document
+		# Lock the document whilst updating
+		with self._Lock(document._id):
+			
+			data = json.dumps(document.instanceToDict())
+			
+			r = self._database_session.put("%s/%s" % (self._database_url,document._id),data=data)
+			
+			if r.status_code == 201:
+				document._rev = r.json()["rev"]
+			else:
+				raise Exception(r.json())
+			
+			# If this document has linked documents with indexes must update
+			if document.__class__.hasLinksWithIndexes():
+				
+				self._updateLinkIndexes(document)
+
+			return document
 	
 	# Get single document
 	def get(self,_id,rev=None,as_json=False):
@@ -895,11 +983,25 @@ class Database(object):
 	# Deletes a single document
 	def delete(self,document):
 		
-		r = self._database_session.delete("%s/%s?rev=%s" % (self._database_url,document._id,document._rev))
-		
-		if r.status_code != 200:
+		# Lock the document whilst deleting
+		with self._Lock(document._id):
 			
-			raise Exception(r.json())
+			r = self._database_session.delete("%s/%s?rev=%s" % (self._database_url,document._id,document._rev))
+			
+			if r.status_code != 200:
+				
+				raise Exception(r.json())
+			
+		# If this document has linked documents must tidy up to stop orphans
+		if document.__class__.hasLinks():
+			
+			# Delete all linkdocuments that reference the deleted document
+			self.deleteAllLinks(document)
+	
+	# Does document id exist
+	def exists(self,_id):
+		
+		return [_id] == self.existsMultiple([_id])
 	
 	# Bulk doc API used for add/update/delete multiple	
 	def _bulkDocs(self,documents):
@@ -945,17 +1047,105 @@ class Database(object):
 	
 	# Update multiple documents
 	def updateMultiple(self,documents):
-		return self._bulkDocs(documents)
+		
+		ok_documents = []
+		failed_documents = []
+		
+		class_documents = {}
+		
+		# Must loop and place in dicts based on class
+		for document in documents:
+
+			documents = class_documents.setdefault(document.__class__,[])
+			documents.append(document)
+			
+		for document_class in class_documents:
+			
+			# If no links with indexes then can safely bulk update (as no linked documents to remove)
+			if not document_class.hasLinksWithIndexes():
+				
+				(cls_ok_documents,cls_failed_documents) = self._bulkDocs(class_documents[document_class])
+				ok_documents.extend(cls_ok_documents)
+				failed_documents.extend(cls_failed_documents)
+				
+			else:
+				
+				# If links exist then must update one at a time and lock
+				for document in class_documents[document_class]:
+					
+					try:
+						
+						document = self.update(document)
+						ok_documents.append(document)
+						
+					except:
+						
+						failed_documents.append(document)
+						
+		return (ok_documents,failed_documents)
 	
 	# Delete multiple documents
 	def deleteMultiple(self,documents):
 		
-		# Mark all docs for delete
+		ok_documents = []
+		failed_documents = []
+		
+		class_documents = {}
+		
+		# Must loop and place in dicts based on class
 		for document in documents:
+			
+			# First mark for delete
 			document.setMarkedForDelete(True)
 			
-		return self._bulkDocs(documents)
-	
+			documents = class_documents.setdefault(document.__class__,[])
+			documents.append(document)
+			
+		for document_class in class_documents:
+			
+			# If no links then can safely bulk delete (as no linked documents to remove)
+			if not document_class.hasLinks():
+				
+				(cls_ok_documents,cls_failed_documents) = self._bulkDocs(class_documents[document_class])
+				ok_documents.extend(cls_ok_documents)
+				failed_documents.extend(cls_failed_documents)
+				
+			else:
+				
+				# If links exist then must delete one at a time and lock
+				for document in class_documents[document_class]:
+					
+					try:
+						
+						self.delete(document)
+						ok_documents.append(document)
+						
+					except:
+						
+						failed_documents.append(document)
+						
+		return (ok_documents,failed_documents)
+
+	# Check for existence of multiple document ids (don't want to support documents as would then have to inflate first to check existance)
+	def existsMultiple(self,_ids):
+		headers = {"content-type": "application/json"}	
+		
+		data = json.dumps({"keys":_ids})
+		
+		r = self._database_session.post("%s/_all_docs" % (self._database_url), headers=headers,data=data)
+		
+		if r.status_code == 200:
+			
+			_ids_that_exist = []
+			for row in r.json()["rows"]:
+				if not ("deleted" in row or "error" in row):
+					_ids_that_exist.append(row["id"])
+					
+			return _ids_that_exist
+		
+		else:
+			raise Exception(r.json())
+		
 	# Tries to inflate a dict of data into a Document
 	def _createDocument(self,document_data):
 		
@@ -1009,37 +1199,72 @@ class Database(object):
 		
 		else:
 			raise Exception(r.json())
-	
+
 	
 	# Add links to documents
 	def addLinks(self,link_property,to_documents):
 		
+		# The created link documents
+		link_documents = []
+		
 		# Get the from doc and property itself
 		(from_document,link_property) = link_property
-		
-		# Check to make sure documents have been added to the db
-		documents_to_add = []
+	
+		# See if need to add from doc
 		if not from_document.hasBeenAdded():
-			documents_to_add.append(from_document)
+			from_document = self.add(from_document)
 			
 		# Create new link document per to document
 		for to_document in to_documents:
+			
+			documents_to_add = []
+			document_ids_to_lock = [from_document._id]
+			
+			# See if need add to doc or lock if already exists
 			if not to_document.hasBeenAdded():
 				documents_to_add.append(to_document)
+			else:
+				document_ids_to_lock.append(to_document._id)
 		
-			# Now create link documents
-			link_document = _LinkDocument()
-			link_document.name = link_property.getName()
-			link_document.reverse_name = link_property.getReverse()
-			link_document.from_id = from_document._id
-			link_document.from_type = from_document.type_
-			link_document.to_id = to_document._id
-			link_document.to_type = to_document.type_
-			
-			# Add documents to database
-			documents_to_add.append(link_document)
+			with self._Lock(document_ids_to_lock):
+				
+				# Check documents exist still (as now locked)
+				if document_ids_to_lock == self.existsMultiple(document_ids_to_lock):
+				
+					# Check not already linked (only add if not linked already)
+					existing_links = self.getLinks((from_document,link_property), to_document._id)		
+					if len(existing_links) == 0:
+						
+						# Now create link documents
+						link_document = _LinkDocument()
+						link_document.name = link_property.getName()
+						link_document.reverse_name = link_property.getReverse()
+						link_document.from_id = from_document._id
+						link_document.from_type = from_document.type_
+						link_document.to_id = to_document._id
+						link_document.to_type = to_document.type_
+
+						# Add indexes if present
+						for index_property_path in link_property.getIndexPropertyPaths():
+
+							(property_exists,property_value) = to_document.getPropertyValueByPath(index_property_path)
+							if property_exists:
+								link_document.indexes[index_property_path] = property_value
+
+						# Add reverse indexes if present
+						for reverse_index_property_path in link_property.getReverseIndexPropertyPaths():
+
+							(property_exists,property_value) = from_document.getPropertyValueByPath(reverse_index_property_path)
+							if property_exists:
+								link_document.reverse_indexes[reverse_index_property_path] = property_value
+							
+						# Add documents to database
+						documents_to_add.append(link_document)
+						
+						# Add to database
+						link_documents.extend(self.addMultiple(documents_to_add))
 		
-		return self.addMultiple(documents_to_add)
+		return link_documents
 	
 	# Add linked document
 	def addLink(self,link_property,to_document):
@@ -1056,15 +1281,43 @@ class Database(object):
 		end_key = [from_document._id,link_property.getName(),{}]
 		
 		params = {
-			"include_docs" : not as_json,
+			"include_docs" : True,
 			"startkey" : json.dumps(start_key),
 			"endkey" : json.dumps(end_key)
 		}
-		
+	
 		if limit:
 			params["limit"] = limit
 			
 		r = self._database_session.get("%s/_design/_linkdocument/_view/links_by_name" % (self._database_url), params = params)
+		
+		if r.status_code == 200:
+		
+			return self._processViewResponse(r.json(),as_json)
+		
+		else:
+		
+			raise Exception(r.json())
+
+	# Get the linked documents using index
+	def getLinksByIndex(self,link_property,index_property_path,index_property_value,start_key=None,limit=None,as_json=False):
+
+		# Get the from doc and property itself
+		(from_document,link_property) = link_property
+		
+		start_key = [from_document._id,link_property.getName(),index_property_path,index_property_value,start_key] if start_key else [from_document._id,link_property.getName(),index_property_path,index_property_value]
+		end_key = [from_document._id,link_property.getName(),index_property_path,index_property_value,{}]
+		
+		params = {
+			"include_docs" : True,
+			"startkey" : json.dumps(start_key),
+			"endkey" : json.dumps(end_key)
+		}
+	
+		if limit:
+			params["limit"] = limit
+			
+		r = self._database_session.get("%s/_design/_linkdocument/_view/links_by_indexes" % (self._database_url), params = params)
 		
 		if r.status_code == 200:
 
@@ -1085,10 +1338,14 @@ class Database(object):
 		# Get the from doc and property itself
 		(from_document,link_property) = link_property
 		
+		# Lock the affected documents
+		document_ids_to_lock = [from_document._id]
+		
 		# Build the keys
 		_ids = []
 		for to_document in to_documents:
 			_ids.append([from_document._id,link_property.getName(),to_document._id])
+			document_ids_to_lock.append(to_document._id)
 			
 		headers = {"content-type": "application/json"}
 		
@@ -1103,16 +1360,120 @@ class Database(object):
 
 		if r.status_code == 200:
 
-			# Turn into docs (TODO just need id so add a deleteMultipleById) 
+			# Turn into docs (TODO just need id so add a deleteMultipleByIds) 
 			documents_to_delete = self._processViewResponse(r.json(),False)
 			
-			# Finally delete the documents
-			return self.deleteMultiple(documents_to_delete)
+			# Lock on the id's to stop links being added whilst delete is happening
+			with self._Lock(document_ids_to_lock):
+			
+				# Finally delete the documents
+				return self.deleteMultiple(documents_to_delete)
 		
 		else:
 		
 			raise Exception(r.json())	
+
+	# For a given document this returns all the linked documents
+	def deleteAllLinks(self,from_document):
 		
+		headers = {"content-type": "application/json"}
+		
+		params = {
+			"include_docs" : True
+			
+		}
+
+		data = {"key" : from_document._id}
+
+		# Fetch the link docs
+		r = self._database_session.post("%s/_design/_linkdocument/_view/by_id" % (self._database_url), headers=headers, params=params,  data=json.dumps(data))
+
+		if r.status_code == 200:
+
+			# Turn into docs (TODO just need id so add a deleteMultipleByIds) 
+			documents_to_delete = self._processViewResponse(r.json(),False)
+			
+			# Lock on the id's to stop links being added whilst delete is happening
+			with self._Lock([from_document._id]):
+			
+				# Finally delete the documents
+				return self.deleteMultiple(documents_to_delete)
+		
+		else:
+		
+			raise Exception(r.json())
+
+	# For a given document that has links, update the indexes on the LinkDocuments to reflect document values
+	def _updateLinkIndexes(self,document):
+		
+		headers = {"content-type": "application/json"}
+		
+		params = {
+			"include_docs" : True
+		}
+
+		data = {"key" : document._id}
+
+		# Fetch the link docs
+		r = self._database_session.post("%s/_design/_linkdocument/_view/by_id" % (self._database_url), headers=headers, params=params,  data=json.dumps(data))
+
+		if r.status_code == 200:
+			
+			# Turn into docs
+			link_documents = self._processViewResponse(r.json(),False)
+			
+			# Updates index dict values
+			def update_index_dict(document,index_dict):
+
+				updated = False
+
+				for index_property_path in index_dict:
+					
+					# Get the correct property value
+					(property_exists,property_value) = document.getPropertyValueByPath(index_property_path)
+
+					if property_exists:
+
+						# See if value is different to index
+						if index_dict[index_property_path] != property_value:
+							updated = True 
+							index_dict[index_property_path] = property_value
+				
+					else:
+					
+						# If can't find the property then delete the index as schema must have changed
+						del index_dict[index_property_path]
+
+				return updated
+
+			# Loop over link documents update indexes
+			link_documents_to_update = []
+			
+			for link_document in link_documents:
+				
+				if link_document.to_id == document._id:
+					
+					# Normal index
+					if update_index_dict(document,link_document.indexes):
+						
+						link_documents_to_update.append(link_document)
+
+				elif link_document.from_id == document._id:
+					
+					# Reverse index
+					if update_index_dict(document,link_document.reverse_indexes):
+						
+						link_documents_to_update.append(link_document)
+
+			# If any documents need updating do
+			if len(link_documents_to_update) > 0:
+				
+				self.updateMultiple(link_documents_to_update)
+
+		else:
+		
+			raise Exception(r.json())
+
 	# Loops over document classes and creates their schema's and if changed updates schema version and design docs for indexes
 	def sync(self):
 		
@@ -1599,6 +1960,11 @@ class DocumentMetaClass(BaseDocumentMetaClass):
 			if hasattr(base,"_indexes"):
 				_indexes.extend(base._indexes)
 		
+		_links = []
+		for base in bases:
+			if hasattr(base,"_links"):
+				_links.extend(base._links)
+
 		# Iterate through the new class' __dict__ and update all recognised index names
 		for name, attr in classDict.iteritems():
 			
@@ -1612,9 +1978,15 @@ class DocumentMetaClass(BaseDocumentMetaClass):
 				
 				# Append the name of the index to class var
 				_indexes.append(name)
+			
+			# Store whether class contains any Link properties
+			if isinstance(attr,LinkProperty):
+				
+				_links.append(name)
 		
 		# Set class property
 		document_class._indexes = _indexes
+		document_class._links = _links
 		
 		# Loop over the view properties and copy them into the new class
 		schema_design_document_class_views = {}
@@ -1704,6 +2076,21 @@ class Document(BaseDocument):
 			schema_design_document.indexes_["map"] = "function(doc){}"
 		
 		return schema_design_document
+	
+	@classmethod
+	def hasLinks(cls):
+		
+		return len(cls._links) > 0
+
+	@classmethod
+	def hasLinksWithIndexes(cls):
+		
+		for link_property in cls._links:
+			
+			if getattr(cls,link_property).hasIndexes():
+				return True
+
+		return False
 			
 """
 Used for unbound documents e.g. documents that aren't compliant with a schema
@@ -1723,6 +2110,35 @@ class _LinkDocument(Document):
 	to_type = StringProperty()
 	from_id = StringProperty()
 	to_id = StringProperty()
+
+	def __init__(self,document_data=None):
+		
+		super(_LinkDocument,self).__init__(document_data=document_data)
+
+		# Used to store secondary indexes on the linked document (to allow for quicker return of links)
+		self.indexes = getattr(self,"indexes",{})
+		self.reverse_indexes = getattr(self,"reverse_indexes",{})
+
+	# Overridden so that indexes added to the dict 
+	def instanceToDict(self):
+
+		document_data = super(_LinkDocument,self).instanceToDict()
+		document_data["indexes"] = self.indexes
+		document_data["reverse_indexes"] = self.reverse_indexes
+		
+		return document_data
+
+	# Overridden so that indexes can be taken out the dict
+	def instanceFromDict(self,dict_data):
+		
+
+		if "indexes" in dict_data and "reverse_indexes" in dict_data:
+			self.indexes = dict_data["indexes"]
+			self.reverse_indexes = dict_data["reverse_indexes"]
+			del dict_data["indexes"]
+			del dict_data["reverse_indexes"]
+		
+		super(_LinkDocument,self).instanceFromDict(dict_data)
 	
 	
 """
@@ -1731,7 +2147,19 @@ Design document dealing with links
 @_id("_design/_linkdocument")
 class _LinkDesignDocument(DesignDocument):
 
-	# Returns the actual link documents (used mostly in delete)
+	# Returns the actual links documents by id (used in document delete to remove all linked documents)
+	by_id = View({
+		"map" :(
+			"function(doc) {"
+				"if(doc.type_=='_linkdocument') {"
+					"emit(doc.from_id,null);"
+					"emit(doc.to_id,null);"
+				"}"
+			"}"
+		)
+	})
+
+	# Returns the actual link documents (used mostly in deleteLinks)
 	by_name = View({
 		"map" :(
 			"function(doc) {"
@@ -1753,4 +2181,20 @@ class _LinkDesignDocument(DesignDocument):
 				"}"
 			"}"
 		)
-	})	
+	})
+
+	# Returns the linked docs by indexes
+	links_by_indexes = View({
+		"map" :(
+			"function(doc) {"
+				"if(doc.type_=='_linkdocument') {"
+					"for(property_path in doc.indexes) {"
+						"emit([doc.from_id,doc.name,property_path,doc.indexes[property_path],doc.to_id],{'_id': doc.to_id});"
+					"}"
+					"for(property_path in doc.reverse_indexes) {"
+						"emit([doc.to_id,doc.reverse_name,property_path,doc.reverse_indexes[property_path],doc.from_id],{'_id': doc.from_id});"
+					"}"
+				"}"
+			"}"
+		)
+	})		

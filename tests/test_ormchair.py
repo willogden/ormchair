@@ -135,7 +135,24 @@ class SchemaTestCase(unittest.TestCase):
 		
 		self.assertEqual(schema_instance,schema_instance.getRootInstance())
 		self.assertEqual(schema_instance,schema_instance.dict_property.getRootInstance())
+	
+	def test_get_property_by_path(self):
 		
+		schema_instance = self.schema_class()
+		
+		schema_instance.string_property = "a string property"
+		schema_instance.number_property = 100.01
+		schema_instance.integer_property = 100
+		schema_instance.boolean_property = False
+		schema_instance.dict_property.string_property = "a string property 2"
+		
+		self.assertEqual(schema_instance.getPropertyValueByPath("string_property"), (True,"a string property"))
+		self.assertEqual(schema_instance.getPropertyValueByPath("number_property"), (True,100.01))
+		self.assertEqual(schema_instance.getPropertyValueByPath("integer_property"), (True,100))
+		self.assertEqual(schema_instance.getPropertyValueByPath("boolean_property"), (True,False))
+		self.assertEqual(schema_instance.getPropertyValueByPath("dict_property.string_property"), (True,"a string property 2"))
+
+
 class StringPropertyTestCase(unittest.TestCase):
 	
 	def setUp(self):
@@ -541,6 +558,12 @@ class LinkPropertyTestCase(unittest.TestCase):
 		
 		self.assertTrue(hasattr(linked_class,reverse_property_name))
 		self.assertIsInstance(getattr(linked_class,reverse_property_name), ormchair.LinkProperty)
+	
+	def test_has_links(self):
+		
+		self.assertTrue(self.schema_class_a.hasLinks())
+		self.assertTrue(self.schema_class_b.hasLinks())
+	
 
 class SessionTestCase(unittest.TestCase):
 	
@@ -637,7 +660,7 @@ class DatabaseTestCase(unittest.TestCase):
 				)
 			)
 			
-			related_pets = ormchair.LinkProperty(Pet,reverse="owner")
+			related_pets = ormchair.LinkProperty(Pet,reverse="owner",index_property_paths=["name"],reverse_index_property_paths=["address.postcode.postcode_1"])
 			
 			best_pet = ormchair.EmbeddedLinkProperty(Pet)
 			
@@ -806,19 +829,88 @@ class DatabaseTestCase(unittest.TestCase):
 		
 		person1 = self.person_class()
 		person1.name = "Will"
-		
+		person1.address.postcode.postcode_1 = "ABC 123"
+
 		pet1 = self.pet_class()
 		pet1.name = "Pooch"
 		
 		pet2 = self.pet_class()
 		pet2.name = "Snoop"
 		
-		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet2])
+		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet1,pet2])
 		
 		person1_related_pets = self.test_ormchair_db.getLinks(person1.related_pets)
-		
+
 		self.assertIn(pet1, person1_related_pets)
 		self.assertIn(pet2, person1_related_pets)
+		
+		# Checks duplicate isn't added (pet1)
+		self.assertEqual(len(person1_related_pets), 2)
+
+	def test_get_links_by_index(self):
+
+		person1 = self.person_class()
+		person1.name = "Will"
+		person1.address.postcode.postcode_1 = "ABC 123"
+
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+
+		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet1,pet2])
+		
+		# Test index
+		person1_related_pets = self.test_ormchair_db.getLinksByIndex(person1.related_pets,"name","Snoop")
+		self.assertIn(pet2,person1_related_pets)
+		self.assertNotIn(pet1,person1_related_pets)
+
+		# Test reverse index
+		person2 = self.person_class()
+		person2.name = "Dave"
+		person2.address.postcode.postcode_1 = "ABC 123"
+
+		pet3 = self.pet_class()
+		pet3.name = "Pooch2"
+		
+		pet4 = self.pet_class()
+		pet4.name = "Snoop2"
+
+		self.test_ormchair_db.addLinks(person2.related_pets, [pet3,pet4])
+
+		pet1_owners = self.test_ormchair_db.getLinksByIndex(pet1.owner,"address.postcode.postcode_1","ABC 123")
+		self.assertIn(person1,pet1_owners)
+		self.assertNotIn(person2,pet1_owners)
+
+	def test_update_document_with_link_indexes(self):
+
+		person1 = self.person_class()
+		person1.name = "Will"
+		person1.address.postcode.postcode_1 = "ABC 123"
+
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+
+		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet2])
+		
+		# Test index
+		person1_related_pets = self.test_ormchair_db.getLinksByIndex(person1.related_pets,"name","Snoop")
+		self.assertIn(pet2,person1_related_pets)
+		self.assertNotIn(pet1,person1_related_pets)
+
+		# Update pet object
+		pet2.name = "SnoopUpdated"
+		pet2 = self.test_ormchair_db.update(pet2)
+
+		# Test index (after document update)
+		person1_related_pets = self.test_ormchair_db.getLinksByIndex(person1.related_pets,"name","SnoopUpdated")
+		self.assertIn(pet2,person1_related_pets)
+		self.assertNotIn(pet1,person1_related_pets)
+
 		
 	def test_delete_links(self):
 		
@@ -844,6 +936,24 @@ class DatabaseTestCase(unittest.TestCase):
 		
 		self.assertNotIn(pet1, person1_related_pets)
 		self.assertNotIn(pet2, person1_related_pets)
+
+	def test_delete_document_with_links(self):
+		
+		person1 = self.person_class()
+		person1.name = "Will"
+		
+		pet1 = self.pet_class()
+		pet1.name = "Pooch"
+		
+		pet2 = self.pet_class()
+		pet2.name = "Snoop"
+		
+		self.test_ormchair_db.addLinks(person1.related_pets, [pet1,pet2])
+
+		self.test_ormchair_db.delete(person1)
+
+		linkdocuments = self.test_ormchair_db.getByView(view_name="by_id", design_document_id="_design/_linkdocument",key=person1._id)
+		self.assertListEqual(linkdocuments,[])
 	
 	def test_get_by_index(self):
 		
@@ -895,7 +1005,7 @@ class DatabaseTestCase(unittest.TestCase):
 		
 		self.assertIn(pet1,queried_pets)
 		self.assertIn(pet2,queried_pets)
-		
+	
 def suite():
 	
 	suite = unittest.TestSuite()
@@ -905,6 +1015,7 @@ def suite():
 	suite.addTest(SchemaTestCase('test_schema_instance_to_dict'))
 	suite.addTest(SchemaTestCase('test_dict_to_schema_instance'))
 	suite.addTest(SchemaTestCase('test_root_instance'))
+	suite.addTest(SchemaTestCase('test_get_property_by_path'))
 	
 	suite.addTest(StringPropertyTestCase('test_is_required'))
 	suite.addTest(StringPropertyTestCase('test_default_value'))
@@ -940,6 +1051,7 @@ def suite():
 	
 	suite.addTest(LinkPropertyTestCase('test_return_type'))
 	suite.addTest(LinkPropertyTestCase('test_reverse_property'))
+	suite.addTest(LinkPropertyTestCase('test_has_links'))
 	
 	suite.addTest(SessionTestCase('test_create_database'))
 	suite.addTest(SessionTestCase('test_get_database'))
@@ -954,11 +1066,15 @@ def suite():
 	suite.addTest(DatabaseTestCase('test_add_embedded_link'))
 	suite.addTest(DatabaseTestCase('test_add_link'))
 	suite.addTest(DatabaseTestCase('test_add_links'))
+	suite.addTest(DatabaseTestCase('test_get_links_by_index'))
 	suite.addTest(DatabaseTestCase('test_delete_links'))
 	suite.addTest(DatabaseTestCase('test_get_by_index'))
 	suite.addTest(DatabaseTestCase('test_get_by_view'))
 	suite.addTest(DatabaseTestCase('test_get_by_view_in_document'))
+	suite.addTest(DatabaseTestCase('test_delete_document_with_links'))
+	suite.addTest(DatabaseTestCase('test_update_document_with_link_indexes'))
 	
+
 	return suite
 
 if __name__ == "__main__":
