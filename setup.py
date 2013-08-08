@@ -2,7 +2,7 @@ from distutils.core import setup
 
 setup(
 	name='ormchair',
-	version='0.3.0',
+	version='0.3.1',
 	description='An ORM for CouchDB with JSON-Schema export support',
 	long_description=open('README').read(),
 	author='Will Ogden',

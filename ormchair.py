@@ -953,7 +953,7 @@ class Database(object):
 				raise Exception(r.json())
 			
 			# If this document has linked documents with indexes must update
-			if document.__class__.hasLinksWithIndexes():
+			if issubclass(document.__class__, Document) and document.__class__.hasLinksWithIndexes():
 				
 				self._updateLinkIndexes(document)
 
@@ -1062,7 +1062,7 @@ class Database(object):
 		for document_class in class_documents:
 			
 			# If no links with indexes then can safely bulk update (as no linked documents to remove)
-			if not document_class.hasLinksWithIndexes():
+			if not (issubclass(document.__class__, Document) and document_class.hasLinksWithIndexes()):
 				
 				(cls_ok_documents,cls_failed_documents) = self._bulkDocs(class_documents[document_class])
 				ok_documents.extend(cls_ok_documents)
